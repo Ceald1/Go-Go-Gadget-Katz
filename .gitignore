@@ -1,0 +1,7 @@
+*.hash
+*.ccache
+*.kirbi
+*.log
+*.exe
+.*
+
