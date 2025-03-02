@@ -76,9 +76,9 @@ type sam_key_data struct {
 	_        uint64
 }
 type sam_account struct {
-	name   string
-	rid    uint32
-	nthash string
+	Name   string
+	Rid    uint32
+	Nthash string
 }
 
 type UserCreds struct {

