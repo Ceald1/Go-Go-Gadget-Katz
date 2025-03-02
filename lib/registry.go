@@ -40,35 +40,83 @@ func DumpSAM(token windows.Token) ([]*sam_account, error) {
 	}
 	
 	key, err := registry.OpenKey(registry.LOCAL_MACHINE, `SAM\SAM\Domains\Account\Users`, registry.READ)
-	defer  key.Close()
-	sub_keys, _ := key.ReadSubKeyNames(-1)
-	BootKey, err := GetBootKey(token) // Get Boot Key
-	// fmt.Println(BootKey)
 	if err != nil {
-		return acc, err
+		return acc, fmt.Errorf("failed to open Users key: %w", err)
 	}
-	// fmt.Println(hex.EncodeToString(BootKey))
-	systemKey, err := GetSysKey(token, BootKey)
-	// fmt.Println(hex.EncodeToString(systemKey))
-	for _, k := range sub_keys{
-		k = fmt.Sprintf(`SAM\SAM\Domains\Account\Users\%s`, k)
-		sub_k, _ := registry.OpenKey(registry.LOCAL_MACHINE, k, registry.READ)
-		sub_k_data, _ := sub_k.ReadValueNames(-1)
-		sub_k_data_len := len(sub_k_data)
-		if sub_k_data_len > 1 {
-			v, _, _ := sub_k.GetBinaryValue("V")
-			rid := strings.TrimPrefix(k, "000003E9") // Remove common prefix
-			ridInt, _ := strconv.ParseInt(rid, 16, 32)
-			data := GetNT(v, uint32(ridInt), systemKey)
+	defer key.Close()
+
+	subKeys, err := key.ReadSubKeyNames(-1)
+	if err != nil {
+		return acc, fmt.Errorf("failed to read subkeys: %w", err)
+	}
+
+	bootKey, err := GetBootKey(token)
+	if err != nil {
+		return acc, fmt.Errorf("failed to get boot key: %w", err)
+	}
+
+	systemKey, err := GetSysKey(token, bootKey)
+	if err != nil {
+		return acc, fmt.Errorf("failed to get system key: %w", err)
+	}
+
+	for _, k := range subKeys {
+		// Skip non-RID keys (like "Names")
+		if len(k) != 8 {
+			continue
+		}
+
+		// Parse RID from the key name
+		rid, err := parseRIDFromKey(k)
+		if err != nil {
+			continue // Skip invalid RIDs
+		}
+
+		subKeyPath := fmt.Sprintf(`SAM\SAM\Domains\Account\Users\%s`, k)
+		subKey, err := registry.OpenKey(registry.LOCAL_MACHINE, subKeyPath, registry.READ)
+		if err != nil {
+			continue
+		}
+		defer subKey.Close()
+
+		subKeyData, err := subKey.ReadValueNames(-1)
+		if err != nil {
+			continue
+		}
+
+		// Check if this is a valid user entry (should have "V" value)
+		if len(subKeyData) > 1 {
+			v, _, err := subKey.GetBinaryValue("V")
+			if err != nil {
+				continue
+			}
+
+			data := GetNT(v, rid, systemKey)
 			acc = append(acc, &data)
-
-
-
 		}
 	}
-	
 
 	return acc, nil
+}
+
+// parseRIDFromKey extracts the RID from a registry key name
+func parseRIDFromKey(keyName string) (uint32, error) {
+	// Registry key names for user accounts are stored as hex strings
+	// Remove any leading/trailing whitespace
+	keyName = strings.TrimSpace(keyName)
+	
+	// Validate key format
+	if len(keyName) != 8 {
+		return 0, fmt.Errorf("invalid key length: %s", keyName)
+	}
+
+	// Parse the hex string to uint32
+	ridInt, err := strconv.ParseUint(keyName, 16, 32)
+	if err != nil {
+		return 0, fmt.Errorf("failed to parse RID from key %s: %w", keyName, err)
+	}
+
+	return uint32(ridInt), nil
 }
 
 
