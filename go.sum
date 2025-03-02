@@ -4,6 +4,10 @@ github.com/charmbracelet/lipgloss v1.0.0 h1:O7VkGDvqEdGi93X+DeqsQ7PKHDgtQfF8j8/O
 github.com/charmbracelet/lipgloss v1.0.0/go.mod h1:U5fy9Z+C38obMs+T+tJqst9VGzlOYGj4ri9reL3qUlo=
 github.com/charmbracelet/x/ansi v0.4.2 h1:0JM6Aj/g/KC154/gOP4vfxun0ff6itogDYk41kof+qk=
 github.com/charmbracelet/x/ansi v0.4.2/go.mod h1:dk73KoMTT5AX5BsX0KrqhsTqAnhZZoCBjs7dGWp4Ktw=
+github.com/jfjallid/go-smb v0.5.9 h1:NvS5+/dNnl3eCLqqUTHrXT99WK3WrJoQk84jR4rHhho=
+github.com/jfjallid/go-smb v0.5.9/go.mod h1:gCorMd5NXhyMR3f1/x+qTZRSN35/6iY5TuqFIWb+Ovg=
+github.com/jfjallid/golog v0.3.3 h1:dY6qf8wTxJ9OwBPVTadVRDmt/6MVXSWwXrxaGMMyXsU=
+github.com/jfjallid/golog v0.3.3/go.mod h1:19Q/zg5OgPPd0xhFllokPnMzthzhFPZmiAGAokE7k58=
 github.com/lucasb-eyer/go-colorful v1.2.0 h1:1nnpGOrhyZZuNyfu1QjKiUICQ74+3FNCN69Aj6K7nkY=
 github.com/lucasb-eyer/go-colorful v1.2.0/go.mod h1:R4dSotOR9KMtayYi1e77YzuveK+i7ruzyGqttikkLy0=
 github.com/mattn/go-isatty v0.0.20 h1:xfD0iDuEKnDkl03q4limB+vH+GxLEtL/jb4xVJSWWEY=

@@ -23,13 +23,10 @@ func main(){
 	}
 	info := style.SuccessTextStyle.Render("\nSYSTEM access!")
 	log.Println(info)
-	key,err := lib.SAM(system)
+	err = lib.DumpSAM(system)
 	if err != nil {
 		err = fmt.Errorf(style.ErrorTextStyle.Render(err.Error()))
 		panic(err)
 	}
-	fmt.Println(key.ReadSubKeyNames(-1))
-
-	
 	
 }
