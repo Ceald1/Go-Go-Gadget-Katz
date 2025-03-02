@@ -7,7 +7,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 
-	// "github.com/jfjallid/go-smb/smb/encoder"
+	
 	"golang.org/x/sys/windows"
 
 	"strings"

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 )
+// lots of code used from: https://github.com/jfjallid/go-secdump.git
 
 type domain_account_f struct { // 104 bytes of fixed length fields
 	Revision                     uint16

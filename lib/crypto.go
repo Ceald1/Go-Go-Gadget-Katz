@@ -1,5 +1,7 @@
 package lib
 
+// lots of code used from: https://github.com/jfjallid/go-secdump.git
+
 import (
 	"crypto/aes"
 	"crypto/cipher"
