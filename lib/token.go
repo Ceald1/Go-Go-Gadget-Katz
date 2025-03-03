@@ -36,7 +36,7 @@ func enablePrivilege() error {
 	return nil
 }
 
-func findLsassProcess() (*windows.Handle, error) {
+func findSystemProcess() (*windows.Handle, error) {
 	h, err := windows.CreateToolhelp32Snapshot(windows.TH32CS_SNAPPROCESS, 0)
 	if err != nil {
 		return nil, fmt.Errorf("CreateToolhelp32Snapshot failed: %v", err)
@@ -50,14 +50,18 @@ func findLsassProcess() (*windows.Handle, error) {
 		return nil, fmt.Errorf("Process32First failed: %v", err)
 	}
 
+	systemProcesses := []string{"lsass.exe", "winlogon.exe", "services.exe"}
+
 	for {
 		name := windows.UTF16ToString(pe.ExeFile[:])
-		if name == "lsass.exe" {
-			handle, err := windows.OpenProcess(windows.PROCESS_QUERY_INFORMATION, false, pe.ProcessID)
-			if err != nil {
-				return nil, fmt.Errorf("OpenProcess failed: %v", err)
+		for _, procName := range systemProcesses {
+			if name == procName {
+				handle, err := windows.OpenProcess(windows.PROCESS_QUERY_INFORMATION, false, pe.ProcessID)
+				if err != nil {
+					return nil, fmt.Errorf("OpenProcess failed for %s: %v", procName, err)
+				}
+				return &handle, nil
 			}
-			return &handle, nil
 		}
 
 		err = windows.Process32Next(h, &pe)
@@ -69,7 +73,7 @@ func findLsassProcess() (*windows.Handle, error) {
 		}
 	}
 
-	return nil, fmt.Errorf("lsass.exe not found")
+	return nil, fmt.Errorf("No suitable system process found")
 }
 
 func getSystemToken() (windows.Token, error) {
@@ -77,9 +81,9 @@ func getSystemToken() (windows.Token, error) {
 		return 0, fmt.Errorf("failed to enable privileges: %v", err)
 	}
 
-	processHandle, err := findLsassProcess()
+	processHandle, err := findSystemProcess()
 	if err != nil {
-		return 0, fmt.Errorf("failed to find LSASS process: %v", err)
+		return 0, fmt.Errorf("failed to find a system process: %v", err)
 	}
 	defer windows.CloseHandle(*processHandle)
 
@@ -171,4 +175,3 @@ func InjectToken(token windows.Token) error {
 	}
 	return nil
 }
-

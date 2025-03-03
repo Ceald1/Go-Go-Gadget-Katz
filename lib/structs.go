@@ -89,3 +89,55 @@ type UserCreds struct {
 	RID      uint32
 	AES      bool
 }
+// https://www.passcape.com/index.php?section=docsys&cmd=details&id=23
+type lsa_secret struct {
+	Version       uint32
+	EncKeyId      string // 16 bytes
+	EncAlgorithm  uint32
+	Flags         uint32
+	EncryptedData []byte
+}
+
+func (self *lsa_secret) unmarshal(data []byte) error {
+    // Need at least 28 bytes for the fixed-size fields
+    if len(data) < 28 {
+        return fmt.Errorf("insufficient data length for lsa_secret: got %d bytes, need at least 28", len(data))
+    }
+
+    self.Version = binary.LittleEndian.Uint32(data[:4])
+    self.EncKeyId = string(data[4:20])
+    self.EncAlgorithm = binary.LittleEndian.Uint32(data[20:24])
+    self.Flags = binary.LittleEndian.Uint32(data[24:28])
+    
+    // Set encrypted data if there's any data remaining
+    if len(data) > 28 {
+        self.EncryptedData = data[28:]
+    } else {
+        self.EncryptedData = []byte{}
+    }
+    return nil
+}
+
+type lsa_secret_blob struct {
+    Length  uint32
+    Unknown [12]byte
+    Secret  []byte
+}
+
+func (self *lsa_secret_blob) unmarshal(data []byte) error {
+    // Need at least 16 bytes for the header (4 bytes Length + 12 bytes Unknown)
+    if len(data) < 16 {
+        return fmt.Errorf("insufficient data length for lsa_secret_blob: got %d bytes, need at least 16", len(data))
+    }
+
+    self.Length = binary.LittleEndian.Uint32(data[:4])
+    copy(self.Unknown[:], data[4:16])
+
+    // Check if we have enough data for the secret
+    if len(data) < 16+int(self.Length) {
+        return fmt.Errorf("insufficient data length for secret: got %d bytes, need %d", len(data)-16, self.Length)
+    }
+
+    self.Secret = data[16 : 16+self.Length]
+    return nil
+}

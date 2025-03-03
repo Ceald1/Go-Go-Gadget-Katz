@@ -12,8 +12,19 @@ import (
 	"math/bits"
 	"strings"
 	"github.com/jfjallid/go-smb/smb/encoder"
+	"crypto/sha256"
 )
-
+func SHA256(key, value []byte, rounds int) []byte {
+	if rounds == 0 {
+		rounds = 1000
+	}
+	h := sha256.New()
+	h.Write(key)
+	for i := 0; i < 1000; i++ {
+		h.Write(value)
+	}
+	return h.Sum(nil)
+}
 // DecryptAES decrypts data using AES in CBC mode.
 // If iv is nil, a zero IV will be used for each block.
 func DecryptAES(key, ciphertext, iv []byte) ([]byte, error) {
@@ -126,7 +137,7 @@ func GetNT(v []byte, rid uint32, sysKey []byte) sam_account {
 	offsetName := binary.LittleEndian.Uint32(v[0x0c:]) + 0xcc
 	szName := binary.LittleEndian.Uint32(v[0x10:])
 	cred.Username, _ = encoder.FromUnicodeString(v[offsetName : offsetName+szName])
-
+	fmt.Println(cred.Username)
 	szNT := binary.LittleEndian.Uint32(v[0xac:])
 	offsetHashStruct := binary.LittleEndian.Uint32(v[0xa8:]) + 0xcc
 
@@ -228,4 +239,38 @@ func ValidateDecryptedHash(hash []byte) bool {
     }
 
     return true
+}
+func DecryptLSAKey(bootKey, data []byte) (result []byte, err error) {
+    if len(data) < 32 {
+        return nil, fmt.Errorf("insufficient data length: got %d bytes, need at least 32", len(data))
+    }
+
+    var plaintext []byte
+    lsaSecret := &lsa_secret{}
+    if err := lsaSecret.unmarshal(data); err != nil {
+        return nil, fmt.Errorf("failed to unmarshal lsa_secret: %w", err)
+    }
+
+    encryptedData := lsaSecret.EncryptedData
+    if len(encryptedData) < 32 {
+        return nil, fmt.Errorf("encrypted data too short: got %d bytes, need at least 32", len(encryptedData))
+    }
+
+    tmpKey := SHA256(bootKey, encryptedData[:32], 0)
+    plaintext, err = DecryptAES(tmpKey, encryptedData[32:], nil)
+    if err != nil {
+        return nil, fmt.Errorf("failed to decrypt AES: %w", err)
+    }
+
+    lsaSecretBlob := &lsa_secret_blob{}
+    if err := lsaSecretBlob.unmarshal(plaintext); err != nil {
+        return nil, fmt.Errorf("failed to unmarshal lsa_secret_blob: %w", err)
+    }
+
+    if len(lsaSecretBlob.Secret) < 84 { // 52 + 32
+        return nil, fmt.Errorf("secret blob too short: got %d bytes, need at least 84", len(lsaSecretBlob.Secret))
+    }
+
+    result = lsaSecretBlob.Secret[52:84] // Get 32 bytes starting at offset 52
+    return result, nil
 }
