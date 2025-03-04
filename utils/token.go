@@ -1,4 +1,4 @@
-package lib
+package utils
 
 // Referenced from: https://gist.github.com/thewh1teagle/f9d73348f326b332cd0cdb6c35b7e724/revisions
 
@@ -8,6 +8,7 @@ import (
 	"unsafe"
 
 	"golang.org/x/sys/windows"
+	"golang.org/x/sys/windows/registry"
 )
 
 var (
@@ -118,6 +119,21 @@ func impersonateSystem() (windows.Token, error) {
 
 	return token, nil
 }
+func TestRegAccess(token windows.Token) error {
+	err := InjectToken(token)
+	if err != nil {
+		return err
+	}
+	key, err := registry.OpenKey(registry.LOCAL_MACHINE, `SOFTWARE\Microsoft\Windows\CurrentVersion`, registry.READ)
+	defer  key.Close()
+
+	_, _, err = key.GetStringValue("ProgramFilesDir")
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
 
 func getTokenUser(token windows.Token) (string, error) {
 	tokenUser, err := token.GetTokenUser()

@@ -5,6 +5,7 @@ go 1.24.0
 require (
 	github.com/charmbracelet/lipgloss v1.0.0
 	github.com/jfjallid/go-smb v0.5.9
+	golang.org/x/crypto v0.35.0
 	golang.org/x/sys v0.30.0
 )
 

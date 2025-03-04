@@ -2,42 +2,43 @@ package main
 
 import (
 	"fmt"
-	"katz/katz/lib"
-	"log"
+	"katz/katz/modules"
 	"katz/katz/style"
+	"katz/katz/utils"
+	"log"
+	"strings"
 )
 
 
 func main(){
-	system, err := lib.GetSystem()
+	system, err := utils.GetSystem()
 	if err != nil {
 		err = fmt.Errorf(style.ErrorTextStyle.Render(err.Error()))
 		panic(err)
 	}
 	// err = lib.InjectToken(system)
+	err = utils.InjectToken(system)
 	
-	err = lib.TestRegAccess(system)
+	err = utils.TestRegAccess(system)
 	if err != nil {
 		err = fmt.Errorf(style.ErrorTextStyle.Render(err.Error()))
 		panic(err)
 	}
 	info := style.SuccessTextStyle.Render("\nSYSTEM access!")
 	log.Println(info)
-	acc, err := lib.DumpSAM(system)
+	data, err := modules.DumpSAM(system)
 	if err != nil {
-		err = fmt.Errorf(style.ErrorTextStyle.Render(err.Error()))
-		panic(err)
-	}
-	for _, account := range acc {
-		userName := account.Name
-		ntHash := account.Nthash
-		if len(userName) > 0{
-			formatted := fmt.Sprintf(`%s:%s`, userName, ntHash)
-			data := style.SuccessTextStyle.Render(formatted)
-			fmt.Println(data)
+		fmt.Println(err)
+	}else {
+		for _, d := range data {
+			rid := d.Rid
+			Name := d.Name
+			nt := d.Nthash
+			d_str := fmt.Sprint(Name,":",rid,":",nt)
+			d_str = strings.Replace(d_str, " ", "", -1)
+			if Name != ""{
+			fmt.Println(d_str)
+			}
 		}
-
-
 	}
-	
 }
