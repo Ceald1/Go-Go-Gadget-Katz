@@ -6,6 +6,7 @@ import (
 	"io"
 	"katz/katz/modules/sam"
 	"katz/katz/utils"
+	"strings"
 
 	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/registry"
@@ -13,7 +14,16 @@ import (
 type printableSecret interface {
 	PrintSecret(io.Writer)
 }
+type dcc2_cache struct {
+	Domain string
+	User   string
+	Cache  string
+}
 
+// func (self *dcc2_cache) PrintSecret(out io.Writer) {
+// 	fmt.Fprintln(out, self.cache)
+// }
+// var dcc2SecretList = []printableSecret{}
 
 func DumpSAM(token windows.Token) ([]*sam.Sam_account, error){
 	var acc []*sam.Sam_account
@@ -113,6 +123,18 @@ func DumpLSASecrets(token windows.Token, bootkey []byte, VistaStyle bool, histor
 	}
 	for i := range lsaSecrets{
 		result = append(result, &lsaSecrets[i])
+	}
+	return result, err
+}
+func CachedHashes(token windows.Token, bootkey []byte, VistaStyle bool) (result []*dcc2_cache, err error) {
+	hashes, err := sam.GetCachedHash(token, bootkey, VistaStyle)
+	if err != nil {
+		panic(err)
+	}
+	for _, hash := range hashes {
+		userdomain := strings.Split(hash, ":")[0]
+		parts := strings.Split(userdomain, "/")
+		result = append(result, &dcc2_cache{Domain: parts[0], User: parts[1], Cache: hash})
 	}
 	return result, err
 }
