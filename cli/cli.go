@@ -99,7 +99,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 							nt := d.Nthash
 							d_str := fmt.Sprintf("%s:%d:%s", Name, rid, nt)
 							d_str = strings.Replace(d_str, " ", "", -1)
-							formatted = append(formatted, d_str)
+							if d_str != ":0:"{
+								formatted = append(formatted, d_str)
+							}
 						}
 						result = strings.Join(formatted[:], "\n")
 					}
@@ -142,15 +144,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					} else {
 						var VistaStyle = true
 						var history = false
-						for arg, _ := range m.parsedArgs {
-							if arg == "nonVista" {
-								result += "attacking old ass system\n"
+						for key, value := range m.parsedArgs {
+							if key == "nonVista" || value == "nonVista" {
+								commandOutput += "attacking old ass system\n"
 								VistaStyle = false
-							}else if arg == "history" {
+							}else if key == "history" || value == "history" {
 								history = true
 								commandOutput += "getting history\n"
 							}else {
-								commandOutput += fmt.Sprintf("unknown arg '%s'\n",arg)
+								commandOutput += fmt.Sprintf("unknown arg '%s'\n",key)
 							}
 
 						}
@@ -179,7 +181,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						var VistaStyle = true
 						for arg, _ := range m.parsedArgs {
 							if arg == "nonVista" {
-								result += "attacking old ass system\n"
+								commandOutput += "attacking old ass system\n"
 								VistaStyle = false
 							}else {
 								commandOutput += fmt.Sprintf("unknown arg '%s'\n",arg)
@@ -229,14 +231,29 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) parseInput() {
-	re := regexp.MustCompile(`/(\w+):([^ ]+)`)
-	matches := re.FindAllStringSubmatch(m.inputBuffer, -1)
-	m.parsedArgs = make(map[string]string)
-	for _, match := range matches {
-		if len(match) == 3 {
-			m.parsedArgs[match[1]] = match[2]
-		}
-	}
+    // This regex will match both /arg and /arg:value patterns
+    re := regexp.MustCompile(`/(\w+)(?::([^ ]+))?`)
+    matches := re.FindAllStringSubmatch(m.inputBuffer, -1)
+    m.parsedArgs = make(map[string]string)
+    
+    for _, match := range matches {
+        if len(match) >= 2 {
+            if len(match) == 3 && match[2] != "" {
+                // Case: /arg:value
+                m.parsedArgs[match[1]] = match[2]
+            } else {
+                // Case: /arg
+                m.parsedArgs[match[1]] = "true"
+            }
+        }
+    }
+}
+func (m *Model) hasFlag(flag string) bool {
+    value, exists := m.parsedArgs[flag]
+    if !exists {
+        return false
+    }
+    return value == "true"
 }
 
 func (m Model) View() string {
