@@ -88,15 +88,12 @@ func GetSysKey(token windows.Token) (result string, err error){
 	result = fmt.Sprintf("0x%s",hex.EncodeToString(sysKey))
 	return
 }
-func GetBootKey(token windows.Token, toStr bool) (result interface{}, err error) {
+func GetBootKey(token windows.Token) (bootKey []byte, err error) {
 	err = utils.InjectToken(token)
 	if err != nil {
 		return 
 	}
-	bootKey, err := sam.GetBootKey(token)
-	if toStr {
-	result = fmt.Sprintf("0x%s",hex.EncodeToString(bootKey))
-	}
+	bootKey, err = sam.GetBootKey(token)
 	return
 }
 func DumpLSASecrets(token windows.Token, bootkey []byte, VistaStyle bool, history bool) (result []*sam.PrintableLSASecret, err error){
@@ -111,6 +108,9 @@ func DumpLSASecrets(token windows.Token, bootkey []byte, VistaStyle bool, histor
 		newsecrets = append(newsecrets, fmt.Sprintf("%s\\%s\\%s", keySecrets, secrets[i], "CurrVal"))
 	}
 	lsaSecrets, err := sam.GetLSASecrets(token, bootkey, VistaStyle, history)
+	if err != nil {
+		panic(err)
+	}
 	for i := range lsaSecrets{
 		result = append(result, &lsaSecrets[i])
 	}

@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/hex"
 	"fmt"
 	"regexp"
 	"strings"
@@ -109,8 +110,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					commandOutput += "Need system account token!\n"
 				} else {
 					var result string
-					data, err := modules.GetBootKey(m.wintoken, true)
-					result, _ = data.(string)
+					data, err := modules.GetBootKey(m.wintoken)
+					result = "0x" + hex.EncodeToString(data)
 					if err != nil {
 						result = fmt.Sprintf("Error: %s", err)
 					}
@@ -123,8 +124,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				} else {
 					var result string
 					var bootKey []byte
-					data, err := modules.GetBootKey(m.wintoken, false)
-					bootKey, _ = data.([]byte)
+					bootKey, err := modules.GetBootKey(m.wintoken)
 					if err != nil {
 						result = fmt.Sprintf("Error: %s", err)
 					} else {

