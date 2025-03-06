@@ -155,11 +155,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					commandOutput += result + "\n"
 
 				}
-			case strings.HasPrefix(m.inputBuffer, "custom::command"):
-				commandOutput += "Parsed Arguments:\n"
-				for key, value := range m.parsedArgs {
-					commandOutput += fmt.Sprintf("  %s: %s\n", key, value)
-				}
+			// case strings.HasPrefix(m.inputBuffer, "custom::command"):
+			// 	commandOutput += "Parsed Arguments:\n"
+			// 	for key, value := range m.parsedArgs {
+			// 		commandOutput += fmt.Sprintf("  %s: %s\n", key, value)
+			// 	}
 			default:
 				commandOutput += "Unknown command\n available commands:\n"
 				for _, i := range commands {
