@@ -136,6 +136,7 @@ func plusOddParity(input []byte) []byte {
 	return output
 }
 
+
 // GetNT extracts and processes NT hash information from a SAM entry
 func GetNT(v []byte, rid uint32, sysKey []byte) Sam_account {
 	cred := &UserCreds{RID: rid} // Set RID that was missing in original

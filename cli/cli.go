@@ -265,7 +265,7 @@ func (m Model) Init() tea.Cmd {
 }
 
 func Run() {
-	p := tea.NewProgram(InitialModel(),tea.WithAltScreen())
+	p := tea.NewProgram(InitialModel())
 	if err := p.Start(); err != nil {
 		fmt.Printf("Error: %v", err)
 	}

@@ -3,6 +3,7 @@ module katz/katz
 go 1.24.0
 
 require (
+	github.com/alexbrainman/sspi v0.0.0-20231016080023-1a75b4708caa
 	github.com/charmbracelet/bubbles v0.20.0
 	github.com/charmbracelet/bubbletea v1.3.4
 	github.com/charmbracelet/lipgloss v1.0.0
