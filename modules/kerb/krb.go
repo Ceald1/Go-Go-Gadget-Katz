@@ -83,7 +83,7 @@ const (
 )
 
 // TGT attempts to acquire a Kerberos Ticket Granting Ticket and returns it in kirbi format
-func TGT(domain, username, password, outputFile string) (encodedTicket string, err error) {
+func TGT(domain, username, password string) (encodedTicket string, err error) {
 	fmt.Println("Starting TGT acquisition process...")
 
 	var credHandle SECURITY_HANDLE
@@ -227,7 +227,6 @@ func TGT(domain, username, password, outputFile string) (encodedTicket string, e
 			return
 		}
 		
-		fmt.Printf("Kirbi-formatted ticket successfully saved to %s\n", outputFile)
 	} else {
 		err= fmt.Errorf("no ticket data received from security context")
 		return
