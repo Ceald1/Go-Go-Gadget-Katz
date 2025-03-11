@@ -32,6 +32,7 @@ const (
 
 )
 
+
 func stringToAnsiPointer(s string) *byte {
 	if s == "" {
 		return nil
@@ -88,7 +89,7 @@ func TGT(domain, username, password string) (string, error) {
 
 	var contextHandle SECURITY_HANDLE
 	var contextAttributes uint32
-	contextReqFlags := ISC_REQ_MUTUAL_AUTH | ISC_REQ_CONFIDENTIALITY
+	contextReqFlags := SECPKG_CRED_OUTBOUND
 
 	status, _, errCall = procInitializeSecurityContextA.Call(
 		uintptr(unsafe.Pointer(&credHandle)),
@@ -96,7 +97,8 @@ func TGT(domain, username, password string) (string, error) {
 		uintptr(unsafe.Pointer(targetPtr)),
 		uintptr(contextReqFlags),
 		0,
-		SECURITY_NATIVE_DREP,
+		ISC_REQ_DELEGATE | ISC_REQ_MUTUAL_AUTH | ISC_REQ_ALLOCATE_MEMORY , // Kerberos Flags
+		// SECURITY_NATIVE_DREP,
 		0,
 		0,
 		uintptr(unsafe.Pointer(&contextHandle)),
