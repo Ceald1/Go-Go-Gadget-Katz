@@ -1,11 +1,9 @@
 package kerb
 
 import (
-	"encoding/base64"
 	"fmt"
 	"strings"
 	"unsafe"
-
 )
 
 var (
@@ -41,7 +39,7 @@ func stringToAnsiPointer(s string) *byte {
 	return &b[0]
 }
 
-func TGT(domain, username, password string) (string, error) {
+func TGT(domain, username, password string) (*KERB_RETRIEVE_TKT_RESPONSE, error) {
 	var credHandle SECURITY_HANDLE
 	var timeStamp TimeStamp
 
@@ -71,7 +69,7 @@ func TGT(domain, username, password string) (string, error) {
 
 	if status != SEC_E_OK {
 		winErr, _, _ := procGetLastError.Call()
-		return "", fmt.Errorf("AcquireCredentialsHandleA failed: status=0x%x, winErr=0x%x, err=%v", status, winErr, errCall)
+		return nil, fmt.Errorf("AcquireCredentialsHandleA failed: status=0x%x, winErr=0x%x, err=%v", status, winErr, errCall)
 	}
 
 	targetName := fmt.Sprintf("krbtgt/%s", strings.ToUpper(domain))
@@ -109,7 +107,7 @@ func TGT(domain, username, password string) (string, error) {
 
 	if status != SEC_E_OK && status != SEC_I_CONTINUE_NEEDED {
 		winErr, _, _ := procGetLastError.Call()
-		return "", fmt.Errorf("InitializeSecurityContextA failed: status=0x%x, winErr=0x%x, err=%v", status, winErr, errCall)
+		return nil, fmt.Errorf("InitializeSecurityContextA failed: status=0x%x, winErr=0x%x, err=%v", status, winErr, errCall)
 	}
 
 	defer procDeleteSecurityContext.Call(uintptr(unsafe.Pointer(&contextHandle)))
@@ -117,6 +115,18 @@ func TGT(domain, username, password string) (string, error) {
 
 	ticketData := unsafe.Slice((*byte)(unsafe.Pointer(outBuf.pvBuffer)), outBuf.cbBuffer)
 	ticketCopy := append([]byte(nil), ticketData...)
-	encodedTicket := base64.StdEncoding.EncodeToString(ticketCopy)
-	return encodedTicket, nil
+	tk := parseTicket(ticketCopy)
+	tkResp := KERB_RETRIEVE_TKT_RESPONSE{
+		Ticket: *tk,
+	}
+	return &tkResp, nil
+}
+
+func parseTicket(raw_ticket []byte)  (*KERB_EXTERNAL_TICKET){
+    resp := &KERB_EXTERNAL_TICKET{}
+    
+    // Use unsafe.Pointer to dereference and copy bytes directly into the struct
+    copy((*[unsafe.Sizeof(*resp)]byte)(unsafe.Pointer(resp))[:], raw_ticket)
+    
+    return resp
 }

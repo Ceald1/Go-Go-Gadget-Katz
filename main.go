@@ -4,6 +4,7 @@ import (
 	// "fmt"
 	// "katz/katz/modules"
 	// "katz/katz/style"
+
 	"katz/katz/utils"
 	// "log"
 	// "strings"
@@ -27,10 +28,7 @@ func main() {
 		utils.InjectToken(systoken)
 
 		ticketData, _ := test.TGT("test.local", "Administrator", "password")
-		// if err != nil {
-		// 	panic(err)
-		// }
-		fmt.Println(ticketData)
+		fmt.Println(ticketData.Ticket.EncodedTicketSize)
 
 	// }
 }
