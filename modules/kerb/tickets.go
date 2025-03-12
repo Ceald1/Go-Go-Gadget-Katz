@@ -126,7 +126,6 @@ func parseTicket(raw_ticket []byte)  (*KERB_EXTERNAL_TICKET){
     resp := &KERB_EXTERNAL_TICKET{}
     
     // Use unsafe.Pointer to dereference and copy bytes directly into the struct
-    copy((*[unsafe.Sizeof(*resp)]byte)(unsafe.Pointer(resp))[:], raw_ticket)
-    
+    copy((*[unsafe.Sizeof(resp)]byte)(unsafe.Pointer(resp))[:], raw_ticket)
     return resp
 }
