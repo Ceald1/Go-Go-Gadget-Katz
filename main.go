@@ -5,30 +5,28 @@ import (
 	// "katz/katz/modules"
 	// "katz/katz/style"
 
-	"katz/katz/utils"
-	// "log"
-	// "strings"
-	// "fmt"
+	// "katz/katz/utils"
+	// // "log"
+	// // "strings"
+	// // "fmt"
 
-	// "encoding/base64"
-	"fmt"
-	test "katz/katz/modules/kerb"
+	// // "encoding/base64"
+	// "fmt"
+	// test "katz/katz/modules/kerb"
 	// "os"
-	// "katz/katz/cli"
+	cli "katz/katz/cli"
 )
 
 
 func main() {
-	// args := os.Args
-	// if len(args) <= 1{
-	// cli.Run()
-	// }else {
-		systoken, _ := utils.GetSystem()
-		defer systoken.Close()
-		utils.InjectToken(systoken)
 
-		ticketData, _ := test.TGT("test.local", "Administrator", "password")
-		fmt.Println(ticketData.Ticket.EncodedTicketSize)
+		// systoken, _ := utils.GetSystem()
+		// defer systoken.Close()
+		// utils.InjectToken(systoken)
+
+		// ticketData, _ := test.TGT("test.local", "Administrator", "password")
+		// fmt.Println(ticketData.Ticket.EncodedTicketSize)
 
 	// }
+	cli.Init()
 }
