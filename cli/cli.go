@@ -13,9 +13,6 @@ var rootCmd = &cobra.Command{
 	Use: "katz.exe",
 	Short: "Go go gadget katz!",
 	Long: `A go alternative to mimikatz.exe`,
-	Run: func(cmd *cobra.Command, args []string) {
-		PrintBanner()
-	},
 }
 const banner = `
   /\_/\  (    ██╗  ██╗ █████╗ ████████╗███████╗
@@ -54,6 +51,9 @@ var lsa = &cobra.Command{
 			for index := range secrets {
 				output += secrets[index].PrintSecret() + "\n"
 			}
+		}else {
+			cmd.Help()
+			return
 		}
 		fmt.Println(output)
 	},
@@ -63,6 +63,7 @@ func PrintBanner(){
 	fmt.Println(banner)
 }
 func Init() {
+	fmt.Println(banner)
 	lsa.Flags().String("dump", "", "dump lsa database")
 	lsa.Flags().Bool("history", false, "get lsa history")
 	lsa.Flags().Bool("nonvistastyle", false, "non vista style?")
