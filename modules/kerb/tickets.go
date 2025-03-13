@@ -1,15 +1,22 @@
 package kerb
 
 import (
+	"bytes"
+	"encoding/binary"
 	"fmt"
 	"strings"
 	"unsafe"
+
+	"golang.org/x/sys/windows"
 )
 
 var (
 
 	procAcquireCredentialsHandleA  = modSecur32.NewProc("AcquireCredentialsHandleA")
 	procInitializeSecurityContextA = modSecur32.NewProc("InitializeSecurityContextA")
+	procLsaCallAuthenticationPackage = modSecur32.NewProc("LsaCallAuthenticationPackage")
+	procLsaConnectUntrusted = modSecur32.NewProc("LsaConnectUntrusted")
+	procLsaFreeReturnBuffer = modSecur32.NewProc("LsaFreeReturnBuffer")
 
 )
 
@@ -122,8 +129,6 @@ type KRBCred struct {
 	Ticket    []byte `asn1:"tag:0,optional"`
 	Encrypted []byte `asn1:"tag:1"`
 }
-<<<<<<< HEAD
-=======
 
 
 func KerberosInit() (hLsaConnection *windows.Handle, kerberosPackageName *UNICODE_STRING, err error) {
@@ -147,6 +152,12 @@ func KerberosInit() (hLsaConnection *windows.Handle, kerberosPackageName *UNICOD
 	}
 
 	return hLsaConnection, kerberosPackageName, nil
+}
+
+type UNICODE_STRING struct {
+	Length        uint16
+	MaximumLength uint16
+	Buffer        *uint16
 }
 
 type KERB_RETRIEVE_TKT_REQUEST struct {
@@ -266,4 +277,3 @@ func TGS(tgt []byte, hLsaConnection windows.Handle) (ticket []byte, err error){
 	}
 	return
 }
->>>>>>> d9d4d23 (writing functions for exporting TGTs)
