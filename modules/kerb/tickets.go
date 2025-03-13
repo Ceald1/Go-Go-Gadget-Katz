@@ -122,3 +122,131 @@ type KRBCred struct {
 	Ticket    []byte `asn1:"tag:0,optional"`
 	Encrypted []byte `asn1:"tag:1"`
 }
+
+
+func KerberosInit() (hLsaConnection *windows.Handle, kerberosPackageName *UNICODE_STRING, err error) {
+	var status uintptr
+	var MICROSOFT_KERBEROS_NAME_A *uint16
+	MICROSOFT_KERBEROS_NAME_A, _ = windows.UTF16PtrFromString("Kerberos")
+	status, _, _ = procLsaConnectUntrusted.Call(uintptr(unsafe.Pointer(&hLsaConnection)))
+	// defer windows.LocalFree(windows.Handle(unsafe.Pointer(MICROSOFT_KERBEROS_NAME_A))) // free memory when done
+	if status != 0 {
+		fmt.Printf("LsaConnectUntrusted, cannot get LSA handle, error %d\n", status)
+		// Free the allocated memory (similar to LocalFree)
+		
+		err = fmt.Errorf("LsaConnectUntrusted, cannot get LSA handle, error 0x%d", status)
+		return
+	}
+	kerberosPackageName = &UNICODE_STRING{
+		Length:        uint16(len("Kerberos") * 2), // UTF-16 chars are 2 bytes
+		MaximumLength: uint16((len("Kerberos") + 1) * 2), // +1 for null terminator
+		Buffer:        MICROSOFT_KERBEROS_NAME_A,
+	}
+	// fmt.Println(kerberosPackageName.Buffer)
+	return hLsaConnection, kerberosPackageName, nil 
+
+}
+type KERB_RETRIEVE_TKT_REQUEST struct {
+	MessageType 		uint32
+	LogonId				windows.LUID
+	TargetName			UNICODE_STRING
+	TicketFlags			uint32
+	CacheOptions		uint32
+	EncryptionType		int32
+	CredentialHandle	SECURITY_HANDLE
+	UNK					uintptr
+	TargetNameData		[]byte
+}
+
+type KERB_RETRIEVE_TKT_RESPONSE struct {
+	Ticket KERB_EXTERNAL_TICKET
+}
+func (r *KERB_RETRIEVE_TKT_RESPONSE) From_buffer_copy(buffer []byte) {
+	reader := bytes.NewReader(buffer)
+	_ = reader
+	binary.Read(reader, binary.LittleEndian, &r.Ticket)
+}
+
+type PKERB_EXTERNAL_NAME struct {
+	NameType int16
+	NameCount uint16
+	Names UNICODE_STRING
+}
+type KERB_CRYPTO_KEY struct {
+	KeyType int32 
+	Length uint32
+	Value uintptr
+}
+type KERB_EXTERNAL_TICKET struct {
+	ServiceName *PKERB_EXTERNAL_NAME
+	TargetName *PKERB_EXTERNAL_NAME
+	ClientName *PKERB_EXTERNAL_NAME
+	DomainName UNICODE_STRING
+	TargetDomainName UNICODE_STRING
+	AltTargetDomainName UNICODE_STRING
+	SessionKey KERB_CRYPTO_KEY
+	TicketFlags uint32
+	Flags uint32
+	KeyExpirationTime int64
+	StartTime int64
+	EndTime int64
+	RenewUntil int64
+	TimeSkew int64
+	EncodedTicketSize uint32
+	EncodedTicket uintptr
+}
+
+func Retrieve_tick_Helper(targetname string, logonid int, temp_offset int) (KERB_RETRIEVE_TKT_REQUEST){
+	TickFlags := ISC_REQ_DELEGATE | ISC_REQ_MUTUAL_AUTH | ISC_REQ_ALLOCATE_MEMORY // Kerberos Flags
+	CacheOptions := 0x8
+	EncryptionType := 0x0
+	targetNameEnc, _ := windows.UTF16PtrFromString(targetname)
+	targData := make([]byte, len(targetname))
+	var Handle SECURITY_HANDLE
+	targetNameUnicode := &UNICODE_STRING{ // convert target name bs
+		Length:        uint16(len(targetname)),
+		MaximumLength: uint16(len(targetname) + 1),
+		Buffer:        targetNameEnc,
+	}
+	req := KERB_RETRIEVE_TKT_REQUEST{
+		MessageType: 8, // retrieve ticket
+		// LogonId: windows.LUID(0), // current logon
+		TargetName: *targetNameUnicode,
+		TicketFlags: uint32(TickFlags),
+		CacheOptions: uint32(CacheOptions),
+		EncryptionType: int32(EncryptionType),
+		CredentialHandle: Handle,
+		TargetNameData: targData,
+
+	}
+	return req
+}
+
+func Extract_Tick(lsa_handle *windows.Handle, package_id *UNICODE_STRING, target_name string) {
+	message := Retrieve_tick_Helper(target_name, 0, 0)
+	// var response KERB_RETRIEVE_TKT_RESPONSE
+	status, _, _ := procLsaCallAuthenticationPackage.Call(
+		uintptr(*lsa_handle),
+		uintptr(unsafe.Pointer(package_id)),
+		uintptr(unsafe.Pointer(&message)),
+	)
+	
+	// free the memory
+
+	// defer procLsaFreeReturnBuffer.Call(uintptr(unsafe.Pointer(&response)))
+	if status != 0 {
+		// error handling
+		fmt.Printf("LsaCallAuthenticationPackage, cannot get TGT, error %d\n", status)
+		return
+	}
+
+}
+
+func TGS(tgt []byte, hLsaConnection windows.Handle) (ticket []byte, err error){
+	// Get a TGS using LsaCallAuthenticationPackage
+
+	if err != nil {
+		return
+	}
+	return
+}

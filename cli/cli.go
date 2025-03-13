@@ -1,6 +1,7 @@
 package cli
 
 import (
+	// "encoding/base64"
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
@@ -32,6 +33,16 @@ var testCmd = &cobra.Command{
 	Short: "run test code",
 	Run: func (cmd *cobra.Command, args []string)  {
 		tick, _ := test.TGT("test.local", "Administrator", "password")
+		fmt.Println(base64.StdEncoding.EncodeToString(tick))
+		handle,kerberosPackageName, err := test.KerberosInit()
+		fmt.Println(handle)
+		fmt.Println(kerberosPackageName)
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
+		// test.Extract_Tick(handle, kerberosPackageName, "krbtgt/TEST.LOCAL")
+		// tick, _ := test.TGT("test.local", "Administrator", "password")
 		
 
 		fmt.Println(base64.StdEncoding.EncodeToString(tick[10:]))
