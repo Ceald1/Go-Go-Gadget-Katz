@@ -14,7 +14,7 @@ var (
 	modSecur32  = windows.NewLazySystemDLL("secur32.dll")
 	modKernel32 = windows.NewLazySystemDLL("kernel32.dll")
 	procAcquireCredentialsHandle  = modSecur32.NewProc("AcquireCredentialsHandleW")
-	procInitializeSecurityContextW = modSecur32.NewProc("InitializeSecurityContextw")
+	procInitializeSecurityContextW = modSecur32.NewProc("InitializeSecurityContextW")
 	procGetLastError              = modKernel32.NewProc("GetLastError")
 	procFreeContextBuffer         = modSecur32.NewProc("FreeContextBuffer")
 	procDeleteSecurityContext     = modSecur32.NewProc("DeleteSecurityContext")

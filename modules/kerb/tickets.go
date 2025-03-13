@@ -39,7 +39,7 @@ func stringToAnsiPointer(s string) *byte {
 	return &b[0]
 }
 
-func TGT(domain, username, password string) (*KERB_RETRIEVE_TKT_RESPONSE, error) {
+func TGT(domain, username, password string) ([]byte, error) {
 	var credHandle SECURITY_HANDLE
 	var timeStamp TimeStamp
 
@@ -115,17 +115,10 @@ func TGT(domain, username, password string) (*KERB_RETRIEVE_TKT_RESPONSE, error)
 
 	ticketData := unsafe.Slice((*byte)(unsafe.Pointer(outBuf.pvBuffer)), outBuf.cbBuffer)
 	ticketCopy := append([]byte(nil), ticketData...)
-	tk := parseTicket(ticketCopy)
-	tkResp := KERB_RETRIEVE_TKT_RESPONSE{
-		Ticket: *tk,
-	}
-	return &tkResp, nil
+	return ticketCopy, nil
 }
 
-func parseTicket(raw_ticket []byte)  (*KERB_EXTERNAL_TICKET){
-    resp := &KERB_EXTERNAL_TICKET{}
-    
-    // Use unsafe.Pointer to dereference and copy bytes directly into the struct
-    copy((*[unsafe.Sizeof(resp)]byte)(unsafe.Pointer(resp))[:], raw_ticket)
-    return resp
+type KRBCred struct {
+	Ticket    []byte `asn1:"tag:0,optional"`
+	Encrypted []byte `asn1:"tag:1"`
 }

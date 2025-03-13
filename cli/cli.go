@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/base64"
 	"encoding/hex"
 	"fmt"
 	"strings"
@@ -30,7 +31,11 @@ var testCmd = &cobra.Command{
 	Use: "test",
 	Short: "run test code",
 	Run: func (cmd *cobra.Command, args []string)  {
-		test.TGT("test.local", "Administrator", "password")
+		tick, _ := test.TGT("test.local", "Administrator", "password")
+		
+
+		fmt.Println(base64.StdEncoding.EncodeToString(tick[10:]))
+
 	},
 }
 var lsa = &cobra.Command{
