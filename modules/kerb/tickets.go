@@ -122,30 +122,33 @@ type KRBCred struct {
 	Ticket    []byte `asn1:"tag:0,optional"`
 	Encrypted []byte `asn1:"tag:1"`
 }
+<<<<<<< HEAD
+=======
 
 
 func KerberosInit() (hLsaConnection *windows.Handle, kerberosPackageName *UNICODE_STRING, err error) {
 	var status uintptr
 	var MICROSOFT_KERBEROS_NAME_A *uint16
-	MICROSOFT_KERBEROS_NAME_A, _ = windows.UTF16PtrFromString("Kerberos")
-	status, _, _ = procLsaConnectUntrusted.Call(uintptr(unsafe.Pointer(&hLsaConnection)))
-	// defer windows.LocalFree(windows.Handle(unsafe.Pointer(MICROSOFT_KERBEROS_NAME_A))) // free memory when done
-	if status != 0 {
-		fmt.Printf("LsaConnectUntrusted, cannot get LSA handle, error %d\n", status)
-		// Free the allocated memory (similar to LocalFree)
-		
-		err = fmt.Errorf("LsaConnectUntrusted, cannot get LSA handle, error 0x%d", status)
-		return
+	MICROSOFT_KERBEROS_NAME_A, err = windows.UTF16PtrFromString("Kerberos")
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to convert Kerberos string to UTF16: %w", err)
 	}
+	defer windows.LocalFree(windows.Handle(unsafe.Pointer(MICROSOFT_KERBEROS_NAME_A)))
+
+	status, _, err = procLsaConnectUntrusted.Call(uintptr(unsafe.Pointer(&hLsaConnection)))
+	if status != 0 {
+		return nil, nil, fmt.Errorf("LsaConnectUntrusted failed with status 0x%x: %w", status, err)
+	}
+
 	kerberosPackageName = &UNICODE_STRING{
-		Length:        uint16(len("Kerberos") * 2), // UTF-16 chars are 2 bytes
-		MaximumLength: uint16((len("Kerberos") + 1) * 2), // +1 for null terminator
+		Length:        uint16(len("Kerberos") * 2),
+		MaximumLength: uint16((len("Kerberos") + 1) * 2),
 		Buffer:        MICROSOFT_KERBEROS_NAME_A,
 	}
-	// fmt.Println(kerberosPackageName.Buffer)
-	return hLsaConnection, kerberosPackageName, nil 
 
+	return hLsaConnection, kerberosPackageName, nil
 }
+
 type KERB_RETRIEVE_TKT_REQUEST struct {
 	MessageType 		uint32
 	LogonId				windows.LUID
@@ -222,24 +225,37 @@ func Retrieve_tick_Helper(targetname string, logonid int, temp_offset int) (KERB
 	return req
 }
 
-func Extract_Tick(lsa_handle *windows.Handle, package_id *UNICODE_STRING, target_name string) {
+func Extract_Tick(lsa_handle *windows.Handle, package_id *UNICODE_STRING, target_name string) (*KERB_RETRIEVE_TKT_RESPONSE, error) {
 	message := Retrieve_tick_Helper(target_name, 0, 0)
-	// var response KERB_RETRIEVE_TKT_RESPONSE
-	status, _, _ := procLsaCallAuthenticationPackage.Call(
+	var responseSize uint32
+	var responseBuffer *byte
+
+	status, _, err := procLsaCallAuthenticationPackage.Call(
 		uintptr(*lsa_handle),
 		uintptr(unsafe.Pointer(package_id)),
 		uintptr(unsafe.Pointer(&message)),
+		uintptr(unsafe.Pointer(&responseSize)),
+		uintptr(unsafe.Pointer(&responseBuffer)),
 	)
 	
-	// free the memory
-
-	// defer procLsaFreeReturnBuffer.Call(uintptr(unsafe.Pointer(&response)))
 	if status != 0 {
-		// error handling
-		fmt.Printf("LsaCallAuthenticationPackage, cannot get TGT, error %d\n", status)
-		return
+		return nil, fmt.Errorf("LsaCallAuthenticationPackage failed with status 0x%x: %w", status, err)
 	}
 
+	if responseBuffer == nil {
+		return nil, fmt.Errorf("no response data received from LsaCallAuthenticationPackage")
+	}
+
+	// Make sure we free the response buffer when we're done
+	// defer procLsaFreeReturnBuffer.Call(uintptr(unsafe.Pointer(responseBuffer)))
+
+	// Convert the response buffer to our response type
+	response := (*KERB_RETRIEVE_TKT_RESPONSE)(unsafe.Pointer(&responseBuffer))
+	
+	// Create a copy of the response data since the buffer will be freed
+	responseCopy := *response
+	
+	return &responseCopy, nil
 }
 
 func TGS(tgt []byte, hLsaConnection windows.Handle) (ticket []byte, err error){
@@ -250,3 +266,4 @@ func TGS(tgt []byte, hLsaConnection windows.Handle) (ticket []byte, err error){
 	}
 	return
 }
+>>>>>>> d9d4d23 (writing functions for exporting TGTs)
