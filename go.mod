@@ -10,7 +10,6 @@ require (
 	github.com/charmbracelet/lipgloss v1.0.0
 	github.com/jfjallid/go-smb v0.5.9
 	github.com/spf13/cobra v1.9.1
-	github.com/ziggoon/gkirby v0.0.0-20241212022712-b88c6fee7531
 	golang.org/x/crypto v0.6.0
 	golang.org/x/sys v0.30.0
 )
