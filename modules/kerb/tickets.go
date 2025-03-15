@@ -134,6 +134,8 @@ func TGS(tgt []byte, hLsaConnection windows.Handle) (ticket []byte, err error) {
 	return
 }
 
+
+// lots of code copied from: https://github.com/ziggoon/gkirby.git
 func GetLsaHandle() (windows.Handle, error) {
 	isHighIntegrity := IsHighIntegrity()
 	isSystem := IsSystem()
