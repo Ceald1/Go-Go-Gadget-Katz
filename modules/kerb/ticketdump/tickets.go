@@ -1,19 +1,26 @@
-package kerb
+package ticketdump
 
 import (
 	"fmt"
-	"strings"
 	"time"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
 )
 
+
+
+
+
+
+
+
+
 var (
+	modSecur32  = windows.NewLazySystemDLL("secur32.dll")
+	modKernel32 = windows.NewLazySystemDLL("kernel32.dll")
 	advapi32 = windows.NewLazyDLL("advapi32.dll")
 
-	procAcquireCredentialsHandleA      = modSecur32.NewProc("AcquireCredentialsHandleA")
-	procInitializeSecurityContextA     = modSecur32.NewProc("InitializeSecurityContextA")
 	procLsaCallAuthenticationPackage   = modSecur32.NewProc("LsaCallAuthenticationPackage")
 	procLsaConnectUntrusted            = modSecur32.NewProc("LsaConnectUntrusted")
 	procLsaFreeReturnBuffer            = modSecur32.NewProc("LsaFreeReturnBuffer")
@@ -23,116 +30,13 @@ var (
 	procImpersonateLoggedOnUser        = advapi32.NewProc("ImpersonateLoggedOnUser")
 )
 
-type SEC_WINNT_AUTH_IDENTITY_A struct {
-	User           *byte
-	UserLength     uint32
-	Domain         *byte
-	DomainLength   uint32
-	Password       *byte
-	PasswordLength uint32
-	Flags          uint32
-}
+
 
 const (
-	SEC_WINNT_AUTH_IDENTITY_ANSI = 1
 	KerbQueryTicketCacheMessage  = 1
 )
 
-func stringToAnsiPointer(s string) *byte {
-	if s == "" {
-		return nil
-	}
-	b := append([]byte(s), 0)
-	return &b[0]
-}
 
-func TGT(domain, username, password string) ([]byte, error) {
-	var credHandle SECURITY_HANDLE
-	var timeStamp TimeStamp
-
-	authIdentity := SEC_WINNT_AUTH_IDENTITY_A{
-		User:           stringToAnsiPointer(username),
-		UserLength:     uint32(len(username)),
-		Domain:         stringToAnsiPointer(domain),
-		DomainLength:   uint32(len(domain)),
-		Password:       stringToAnsiPointer(password),
-		PasswordLength: uint32(len(password)),
-		Flags:          SEC_WINNT_AUTH_IDENTITY_ANSI,
-	}
-
-	packageName := stringToAnsiPointer("Kerberos")
-
-	status, _, errCall := procAcquireCredentialsHandleA.Call(
-		0,
-		uintptr(unsafe.Pointer(packageName)),
-		SECPKG_CRED_OUTBOUND,
-		0,
-		uintptr(unsafe.Pointer(&authIdentity)),
-		0,
-		0,
-		uintptr(unsafe.Pointer(&credHandle)),
-		uintptr(unsafe.Pointer(&timeStamp)),
-	)
-
-	if status != SEC_E_OK {
-		winErr, _, _ := procGetLastError.Call()
-		return nil, fmt.Errorf("AcquireCredentialsHandleA failed: status=0x%x, winErr=0x%x, err=%v", status, winErr, errCall)
-	}
-
-	targetName := fmt.Sprintf("krbtgt/%s", strings.ToUpper(domain))
-	targetPtr := stringToAnsiPointer(targetName)
-
-	var outBuf SecBuffer
-	outBuf.cbBuffer = 2048
-	outBuf.BufferType = SECBUFFER_TOKEN
-	outBuf.pvBuffer = uintptr(unsafe.Pointer(&make([]byte, outBuf.cbBuffer)[0]))
-
-	var outBufferDesc SecBufferDesc
-	outBufferDesc.ulVersion = SECBUFFER_VERSION
-	outBufferDesc.cBuffers = 1
-	outBufferDesc.pBuffers = uintptr(unsafe.Pointer(&outBuf))
-
-	var contextHandle SECURITY_HANDLE
-	var contextAttributes uint32
-	contextReqFlags := SECPKG_CRED_OUTBOUND
-
-	status, _, errCall = procInitializeSecurityContextA.Call(
-		uintptr(unsafe.Pointer(&credHandle)),
-		0,
-		uintptr(unsafe.Pointer(targetPtr)),
-		uintptr(contextReqFlags),
-		0,
-		ISC_REQ_DELEGATE|ISC_REQ_MUTUAL_AUTH|ISC_REQ_ALLOCATE_MEMORY, // Kerberos Flags
-		// SECURITY_NATIVE_DREP,
-		0,
-		0,
-		uintptr(unsafe.Pointer(&contextHandle)),
-		uintptr(unsafe.Pointer(&outBufferDesc)),
-		uintptr(unsafe.Pointer(&contextAttributes)),
-		uintptr(unsafe.Pointer(&timeStamp)),
-	)
-
-	if status != SEC_E_OK && status != SEC_I_CONTINUE_NEEDED {
-		winErr, _, _ := procGetLastError.Call()
-		return nil, fmt.Errorf("InitializeSecurityContextA failed: status=0x%x, winErr=0x%x, err=%v", status, winErr, errCall)
-	}
-
-	// defer procDeleteSecurityContext.Call(uintptr(unsafe.Pointer(&contextHandle)))
-	// defer procFreeCredentialsHandle.Call(uintptr(unsafe.Pointer(&credHandle)))
-
-	ticketData := unsafe.Slice((*byte)(unsafe.Pointer(outBuf.pvBuffer)), outBuf.cbBuffer)
-	ticketCopy := append([]byte(nil), ticketData...)
-	return ticketCopy, nil
-}
-
-func TGS(tgt []byte, hLsaConnection windows.Handle) (ticket []byte, err error) {
-	// Get a TGS using LsaCallAuthenticationPackage
-
-	if err != nil {
-		return
-	}
-	return
-}
 
 
 // lots of code copied from: https://github.com/ziggoon/gkirby.git
@@ -476,6 +380,28 @@ func getCurrentLUID() (windows.LUID, error) {
 
 	return tokenStats.AuthenticationId, nil
 }
+func GetCurrentLUID() (windows.LUID, error) {
+	return getCurrentLUID()
+	// Helper for other funcs
+	// var currentToken windows.Token
+	// err := windows.OpenProcessToken(windows.CurrentProcess(), windows.TOKEN_QUERY, &currentToken)
+	// if err != nil {
+	// 	return windows.LUID{}, fmt.Errorf("OpenProcessToken failed: %v", err)
+	// }
+	// // defer currentToken.Close()
+
+	// var tokenStats TokenStatistics
+	// var returnLength uint32
+
+	// err = windows.GetTokenInformation(currentToken, windows.TokenStatistics, (*byte)(unsafe.Pointer(&tokenStats)), uint32(unsafe.Sizeof(tokenStats)), &returnLength)
+	// if err != nil {
+	// 	return windows.LUID{}, fmt.Errorf("GetTokenInformation failed: %v", err)
+	// }
+
+	// return tokenStats.AuthenticationId, nil
+}
+
+
 
 func getLogonSessionData(luid windows.LUID) (*LogonSessionData, error) {
 	var sessionDataPtr uintptr

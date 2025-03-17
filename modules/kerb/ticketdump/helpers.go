@@ -1,4 +1,4 @@
-package kerb
+package ticketdump
 
 // copied from: https://github.com/ziggoon/gkirby.git
 import (

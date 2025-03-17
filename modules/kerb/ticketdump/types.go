@@ -1,4 +1,4 @@
-package kerb
+package ticketdump
 
 
 // Types copied from: https://github.com/ziggoon/gkirby/tree/main/types
