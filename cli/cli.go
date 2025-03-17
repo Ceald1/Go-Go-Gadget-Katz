@@ -35,7 +35,10 @@ var testCmd = &cobra.Command{
 	Short: "run test code",
 	Run: func (cmd *cobra.Command, args []string)  {
 		dc, _ := os.Hostname()
-		test.InitConn("Administrator", "test.local", "password", dc + ".test.local")
+		password, _ := cmd.Flags().GetString("passwd")
+		handle, _ := test.InitConn("Administrator", "test.local", password, dc + ".test.local")
+		attr := []string{"mail", "unicodePassword"}
+		test.LdapSearch(handle, "DC=test,DC=local", 1, "(objectClass=user)", attr, 1)
 	},
 }
 
@@ -204,6 +207,9 @@ func PrintBanner(){
 }
 func Init() {
 	fmt.Println(banner)
+
+	testCmd.Flags().String("passwd", "password", "")
+
 	lsa.Flags().Bool("dump", false, "dump lsa database")
 	lsa.Flags().Bool("history", false, "get lsa history")
 	lsa.Flags().Bool("nonvistastyle", false, "non vista style?")
