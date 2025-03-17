@@ -322,7 +322,7 @@ func ExtractTicket(lsaHandle windows.Handle, authPackage uint32, luid windows.LU
 	}
 
 	if responsePtr != 0 {
-		// defer procLsaFreeReturnBuffer.Call(responsePtr)
+		defer procLsaFreeReturnBuffer.Call(responsePtr)
 		response := (*KerbRetrieveTktResponse)(unsafe.Pointer(responsePtr))
 		encodedTicketSize := response.Ticket.EncodedTicketSize
 

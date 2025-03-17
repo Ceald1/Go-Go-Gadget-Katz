@@ -4,6 +4,7 @@ import (
 	// "encoding/base64"
 	"encoding/hex"
 	"fmt"
+	"os"
 	"strings"
 
 	katz_modules "katz/katz/modules"
@@ -11,6 +12,8 @@ import (
 	katz_utils "katz/katz/utils"
 
 	"github.com/spf13/cobra"
+
+	test "katz/katz/modules/ldap"
 )
 
 var rootCmd = &cobra.Command{
@@ -31,7 +34,8 @@ var testCmd = &cobra.Command{
 	Use: "test",
 	Short: "run test code",
 	Run: func (cmd *cobra.Command, args []string)  {
-
+		dc, _ := os.Hostname()
+		test.InitConn("Administrator", "test.local", "password", dc + ".test.local")
 	},
 }
 
