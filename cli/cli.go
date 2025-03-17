@@ -50,7 +50,7 @@ var lootTickets = &cobra.Command{
 			uname := ticket["username"].(string)
 			domain := ticket["domain"].(string)
 			ticket := ticket["krbCred"].(string)
-			fmt.Println(uname + "@" + domain + "::" + ticket)
+			fmt.Println(uname + "@" + domain + "::" + ticket + "\n\n")
 			// fmt.Println(ticket["krbCred"])
 		}
 	},
