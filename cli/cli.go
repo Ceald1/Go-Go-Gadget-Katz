@@ -37,8 +37,10 @@ var testCmd = &cobra.Command{
 		dc, _ := os.Hostname()
 		password, _ := cmd.Flags().GetString("passwd")
 		handle, _ := test.InitConn("Administrator", "test.local", password, dc + ".test.local")
-		attr := []string{"mail", "unicodePassword"}
-		test.LdapSearch(handle, "DC=test,DC=local", 1, "(objectClass=user)", attr, 1)
+		attr := []string{"unicodePwd", "sAMAccountName"}
+		err := test.LdapSearch(handle, "dc=test,dc=local", 0, "(objectClass=*)", attr, 0)
+		fmt.Println(err)
+
 	},
 }
 

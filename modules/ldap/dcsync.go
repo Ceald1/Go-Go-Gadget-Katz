@@ -11,7 +11,7 @@ var (
 	modLdap32          = windows.NewLazySystemDLL("Wldap32.dll")
 	procLdapBindS      = modLdap32.NewProc("ldap_bind_sW")
 	procLdapInitS      = modLdap32.NewProc("ldap_initW")
-	procLdapSearch      = modLdap32.NewProc("ldap_search")
+	procLdapSearch      = modLdap32.NewProc("ldap_search_s")
 	procLdapUnbind     = modLdap32.NewProc("ldap_unbind_s")
 	procLdapResult     = modLdap32.NewProc("ldap_result")
 	procLdapFirstEntry  = modLdap32.NewProc("ldap_first_entry")
@@ -89,22 +89,19 @@ func LdapSearch(handle uintptr, base string, scope uint32, filter string, attrs 
 	cAttrs = append(cAttrs, nil)
 
 	// Call ldap_search
-	for i, _ := range cAttrs {
-		if cAttrs[i] != nil {
-			msgID, _, err := procLdapSearch.Call(
+	msgID, _, err := procLdapSearch.Call(
 				handle,
 				uintptr(unsafe.Pointer(cBase)),
 				uintptr(scope),
 				uintptr(unsafe.Pointer(cFilter)),
-				uintptr(unsafe.Pointer(&cAttrs[i])), // Pass the address of the elements
+				uintptr(unsafe.Pointer(&cAttrs[0])), // Pass the address of the elements
 				uintptr(attrsonly),
 			)
 
-			if msgID == 0 {
-				return fmt.Errorf("ldap_search failed with error: %v", err)
-			}
-		}
+	if msgID == 0 || int(msgID) == -1 {
+		return fmt.Errorf("ldap_search failed with error: %v", err)
 	}
+	
 
 	// Process results (this is a simplified example)
 	// You should implement proper result handling here
