@@ -89,6 +89,7 @@ func LdapSearch(handle uintptr, base string, scope uint32, filter string, attrs 
 	cAttrs = append(cAttrs, nil)
 
 	// Call ldap_search
+	var searchResult *LDAPMessage
 	msgID, _, err := procLdapSearch.Call(
 				handle,
 				uintptr(unsafe.Pointer(cBase)),
@@ -96,12 +97,14 @@ func LdapSearch(handle uintptr, base string, scope uint32, filter string, attrs 
 				uintptr(unsafe.Pointer(cFilter)),
 				uintptr(unsafe.Pointer(&cAttrs[0])), // Pass the address of the elements
 				uintptr(attrsonly),
+				uintptr(unsafe.Pointer(searchResult)),
 			)
 
 	if msgID == 0 || int(msgID) == -1 {
 		return fmt.Errorf("ldap_search failed with error: %v", err)
 	}
-	
+	fmt.Println(msgID)
+	fmt.Println(searchResult)
 
 	// Process results (this is a simplified example)
 	// You should implement proper result handling here
