@@ -5,8 +5,6 @@ import "fmt"
 
 
 
-
-
 func DCSync(username, password, dcHost, domain string, port uint32) {
 	// Initialize the connection
 	handle, err := InitConn(username, domain, password, dcHost)
