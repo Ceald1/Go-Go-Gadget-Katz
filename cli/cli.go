@@ -35,12 +35,9 @@ var testCmd = &cobra.Command{
 	Short: "run test code",
 	Run: func (cmd *cobra.Command, args []string)  {
 		dc, _ := os.Hostname()
+		dc = dc + ".test.local"
 		password, _ := cmd.Flags().GetString("passwd")
-		handle, _ := test.InitConn("Administrator", "test.local", password, dc + ".test.local")
-		// attr := []string{"unicodePwd", "sAMAccountName"}
-		attr := []string{"cn"}
-		err := test.LdapSearch(handle, "dc=test,dc=local", 0, "(objectClass=*)", attr, 0)
-		fmt.Println(err)
+		test.DCSync("Administrator", password, dc, "test.local", 636)
 
 	},
 }
