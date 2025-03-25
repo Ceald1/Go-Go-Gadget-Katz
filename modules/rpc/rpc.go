@@ -11,7 +11,6 @@ import (
 var (
 	modRPC = windows.NewLazySystemDLL("rpc.dll")
 	modMidles = windows.NewLazySystemDLL("midles.dll")
-	modDsGetDC = windows.NewLazySystemDLL("DsGetDC.dll")
 	modNTSecAPI = windows.NewLazySystemDLL("NTSecAPI.dll")
 	modsspi = windows.NewLazySystemDLL("sspi.dll")
 	modsddl = windows.NewLazySystemDLL("sddl.dll")

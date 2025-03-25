@@ -4,12 +4,13 @@ import (
 	// "encoding/base64"
 	"encoding/hex"
 	"fmt"
-	"os"
+	// "os"
 	"strings"
 
 	katz_modules "katz/katz/modules"
 
 	katz_utils "katz/katz/utils"
+	katz_mod_testUtils "katz/katz/modules/utilfunctions"
 
 	"github.com/spf13/cobra"
 
@@ -34,8 +35,7 @@ var testCmd = &cobra.Command{
 	Use: "test",
 	Short: "run test code",
 	Run: func (cmd *cobra.Command, args []string)  {
-		dc, _ := os.Hostname()
-		dc = dc + ".test.local"
+		dc := katz_mod_testUtils.GetDCName("test.local")
 		password, _ := cmd.Flags().GetString("passwd")
 		test.DCSync("Administrator", password, dc, "test.local", 636)
 
