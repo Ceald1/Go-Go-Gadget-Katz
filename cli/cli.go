@@ -13,7 +13,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	test "katz/katz/modules/ldap"
+	test "katz/katz/modules/rpc"
 )
 
 var rootCmd = &cobra.Command{

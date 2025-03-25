@@ -1,13 +1,16 @@
-package ldap
+package rpc
 
-import "fmt"
+import (
+	"fmt"
+	ldap "katz/katz/modules/ldap"
+)
 
 
 
 
 func DCSync(username, password, dcHost, domain string, port uint32) {
-	// Initialize the connection
-	handle, err := InitConn(username, domain, password, dcHost)
+	// Initialize the ldap connection to make DC sync faster
+	handle, err := ldap.InitConn(username, domain, password, dcHost)
 	if err != nil {
 		fmt.Println("Error initializing LDAP connection:", err)
 		return
@@ -15,7 +18,7 @@ func DCSync(username, password, dcHost, domain string, port uint32) {
 
 	// Perform the search
 	attrs := []string{"sAMAccountName", "unicodePwd"} // Specify attributes you want to retrieve
-	err = LdapSearch(handle, "dc=test,dc=local", 2, "(&(objectClass=Person)(objectClass=User))", attrs, 0)
+	err = ldap.LdapSearch(handle, "dc=test,dc=local", 2, "(&(objectClass=Person)(objectClass=User))", attrs, 0)
 	if err != nil {
 		fmt.Println("Error in LDAP search:", err)
 	}
